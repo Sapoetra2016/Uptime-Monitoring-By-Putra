@@ -1,0 +1,49 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pulse
+      POSTGRES_PASSWORD: pulse
+      POSTGRES_DB: Monitoring
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pulse -d Monitoring"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      UPTIME_DB_URL: postgres://pulse:pulse@db:5432/Monitoring?sslmode=disable
+      UPTIME_JWT_SECRET: change-me-in-production
+      UPTIME_ADMIN_USER: admin
+      UPTIME_ADMIN_PASSWORD: admin123
+      UPTIME_PORT: "8080"
+      UPTIME_ALLOWED_ORIGINS: "*"
+    ports:
+      - "8080:8080"
+    volumes:
+      # allow docker container checks via engine API (optional, comment out if not needed)
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+
+volumes:
+  dbdata:

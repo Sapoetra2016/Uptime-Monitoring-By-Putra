@@ -1,0 +1,26 @@
+# ---- Dependencies / build output ----
+node_modules/
+frontend/dist/
+*.tar.gz
+
+# Binary backend hasil build (jangan ikut ke GitHub)
+uptime-server
+uptime-server-*
+backend/uptime-server*
+backend/pulse*
+*.exe
+
+# ---- Rahasia / file lokal (TIDAK BOLEH ke GitHub) ----
+.env
+.env.*
+!.env.example
+deploy.local.sh
+*.local
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,12 @@
+# ============================================================
+# deploy.local.sh.example — template, aman untuk di-commit.
+# Salin ke deploy.local.sh lalu isi nilai asli Anda:
+#   cp deploy.local.sh.example deploy.local.sh
+# deploy.local.sh di-gitignore dan tidak akan pernah ter-upload.
+# ============================================================
+
+UPTIME_DB_USER="apps"
+UPTIME_DB_PASS="ganti-password-db-anda"
+UPTIME_DB_NAME="Monitoring"
+UPTIME_ADMIN_USER="admin"
+UPTIME_ADMIN_PASS="ganti-password-admin-anda"
