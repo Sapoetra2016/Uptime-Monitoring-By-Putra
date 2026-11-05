@@ -158,6 +158,8 @@ CREATE INDEX IF NOT EXISTS idx_ai_analyses_monitor ON ai_analyses(monitor_id, cr
 
 -- Additive migrations for databases created by an earlier version.
 ALTER TABLE users     ADD COLUMN IF NOT EXISTS role            TEXT NOT NULL DEFAULT 'admin';
+ALTER TABLE users     ADD COLUMN IF NOT EXISTS display_name    TEXT NOT NULL DEFAULT '';
+ALTER TABLE users     ADD COLUMN IF NOT EXISTS email           TEXT NOT NULL DEFAULT '';
 ALTER TABLE monitors  ADD COLUMN IF NOT EXISTS headers         JSONB;
 ALTER TABLE monitors  ADD COLUMN IF NOT EXISTS body            TEXT;
 ALTER TABLE monitors  ADD COLUMN IF NOT EXISTS basic_auth_user TEXT;
@@ -174,6 +176,7 @@ ALTER TABLE monitors  ADD COLUMN IF NOT EXISTS ignore_tls      BOOLEAN NOT NULL 
 ALTER TABLE monitors  ADD COLUMN IF NOT EXISTS slo_target_pct  DOUBLE PRECISION NOT NULL DEFAULT 0;
 ALTER TABLE monitors  ADD COLUMN IF NOT EXISTS created_by      TEXT;
 ALTER TABLE monitors  ADD COLUMN IF NOT EXISTS local_ip        TEXT;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS template_id TEXT;
 `
 
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {

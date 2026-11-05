@@ -48,14 +48,14 @@ export default function StatusPagesSection() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold">{t("sp.title")}</h2>
-          <p className="text-sm text-slate-400">
-            {t("sp.desc")}
-          </p>
+          <p className="text-sm text-slate-400">{t("sp.desc")}</p>
         </div>
         {isAdmin && (
           <button
             className="btn-primary"
-            onClick={() => setEditing({ slug: "", title: "", description: "", monitors: [] })}
+            onClick={() =>
+              setEditing({ slug: "", title: "", description: "", monitors: [] })
+            }
           >
             {t("sp.create")}
           </button>
@@ -68,7 +68,10 @@ export default function StatusPagesSection() {
         <StatusPageForm
           key={lang}
           initial={editing}
-          allMonitors={ids.map((id) => monitorStore.getById(id)).filter(Boolean).map((m) => ({ id: m!.id, name: m!.name }))}
+          allMonitors={ids
+            .map((id) => monitorStore.getById(id))
+            .filter(Boolean)
+            .map((m) => ({ id: m!.id, name: m!.name }))}
           onSave={save}
           onCancel={() => setEditing(null)}
         />
@@ -83,10 +86,16 @@ export default function StatusPagesSection() {
             <div className="flex-1">
               <div className="font-medium">{p.title}</div>
               <div className="text-xs text-slate-400">
-                /status/{p.slug} · {t("sp.monitorCount", { n: (p.monitors ?? []).length })}
+                /status/{p.slug} ·{" "}
+                {t("sp.monitorCount", { n: (p.monitors ?? []).length })}
               </div>
             </div>
-            <a href={`/status/${p.slug}`} target="_blank" rel="noreferrer" className="btn-secondary">
+            <a
+              href={`/status/${p.slug}`}
+              target="_blank"
+              rel="noreferrer"
+              className="btn-secondary"
+            >
               {t("sp.view")}
             </a>
             {isAdmin && (
@@ -167,7 +176,9 @@ function StatusPageForm({
         <input
           className="input mt-1"
           value={page.description ?? ""}
-          onChange={(e) => setPage((p) => ({ ...p, description: e.target.value }))}
+          onChange={(e) =>
+            setPage((p) => ({ ...p, description: e.target.value }))
+          }
         />
       </label>
 
@@ -175,10 +186,19 @@ function StatusPageForm({
         <span className="text-slate-300">{t("sp.monitorsLabel")}</span>
         <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
           {allMonitors.map((m) => {
-            const checked = (page.monitors ?? []).some((x) => x.monitorId === m.id);
+            const checked = (page.monitors ?? []).some(
+              (x) => x.monitorId === m.id,
+            );
             return (
-              <label key={m.id} className="flex items-center gap-2 text-slate-300">
-                <input type="checkbox" checked={checked} onChange={() => toggleMonitor(m.id)} />
+              <label
+                key={m.id}
+                className="flex items-center gap-2 text-slate-300"
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleMonitor(m.id)}
+                />
                 {m.name}
               </label>
             );

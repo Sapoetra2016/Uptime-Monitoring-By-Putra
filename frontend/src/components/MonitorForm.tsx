@@ -1,6 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useI18n } from "../lib/i18n";
-import type { EscalationPolicy, Monitor, MonitorType, Notification } from "../lib/types";
+import type {
+  EscalationPolicy,
+  Monitor,
+  MonitorType,
+  Notification,
+} from "../lib/types";
 
 const emptyMonitor: Partial<Monitor> = {
   name: "",
@@ -60,8 +65,13 @@ export default function MonitorForm({
   onCancel: () => void;
   saving: boolean;
 }) {
-  const [form, setForm] = useState<Partial<Monitor>>({ ...emptyMonitor, ...initial });
-  const [pairs, setPairs] = useState<HeaderPair[]>(headersToPairs(initial?.headers));
+  const [form, setForm] = useState<Partial<Monitor>>({
+    ...emptyMonitor,
+    ...initial,
+  });
+  const [pairs, setPairs] = useState<HeaderPair[]>(
+    headersToPairs(initial?.headers),
+  );
   const { t } = useI18n();
 
   useEffect(() => {
@@ -123,7 +133,11 @@ export default function MonitorForm({
 
       {type === "http" && (
         <Field label={t("form.url")} hint={t("form.urlHint")}>
-          <input className="input" value={form.url ?? ""} onChange={(e) => set("url", e.target.value)} />
+          <input
+            className="input"
+            value={form.url ?? ""}
+            onChange={(e) => set("url", e.target.value)}
+          />
         </Field>
       )}
 
@@ -131,7 +145,11 @@ export default function MonitorForm({
         <>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Field label={t("form.method")}>
-              <select className="input" value={form.method ?? "GET"} onChange={(e) => set("method", e.target.value)}>
+              <select
+                className="input"
+                value={form.method ?? "GET"}
+                onChange={(e) => set("method", e.target.value)}
+              >
                 {["GET", "POST", "PUT", "PATCH", "HEAD", "DELETE"].map((m) => (
                   <option key={m} value={m}>
                     {m}
@@ -148,7 +166,11 @@ export default function MonitorForm({
               />
             </Field>
             <Field label={t("form.keyword")} hint={t("form.keywordHint")}>
-              <input className="input" value={form.keyword ?? ""} onChange={(e) => set("keyword", e.target.value)} />
+              <input
+                className="input"
+                value={form.keyword ?? ""}
+                onChange={(e) => set("keyword", e.target.value)}
+              />
             </Field>
           </div>
 
@@ -163,7 +185,11 @@ export default function MonitorForm({
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Field label={t("form.authUser")}>
-              <input className="input" value={form.basicAuthUser ?? ""} onChange={(e) => set("basicAuthUser", e.target.value)} />
+              <input
+                className="input"
+                value={form.basicAuthUser ?? ""}
+                onChange={(e) => set("basicAuthUser", e.target.value)}
+              />
             </Field>
             <Field label={t("form.authPass")}>
               <input
@@ -177,7 +203,9 @@ export default function MonitorForm({
 
           <div>
             <div className="flex items-center justify-between mb-1">
-              <span className="text-slate-300 text-sm">{t("form.headers")}</span>
+              <span className="text-slate-300 text-sm">
+                {t("form.headers")}
+              </span>
               <button
                 type="button"
                 className="text-xs text-app-up hover:underline"
@@ -186,7 +214,11 @@ export default function MonitorForm({
                 {t("form.addHeader")}
               </button>
             </div>
-            {pairs.length === 0 && <div className="text-xs text-slate-500">{t("form.noHeaders")}</div>}
+            {pairs.length === 0 && (
+              <div className="text-xs text-slate-500">
+                {t("form.noHeaders")}
+              </div>
+            )}
             <div className="space-y-2">
               {pairs.map((p, i) => (
                 <div key={i} className="flex gap-2">
@@ -195,7 +227,11 @@ export default function MonitorForm({
                     placeholder={t("form.headerName")}
                     value={p.key}
                     onChange={(e) =>
-                      setPairs((prev) => prev.map((x, j) => (j === i ? { ...x, key: e.target.value } : x)))
+                      setPairs((prev) =>
+                        prev.map((x, j) =>
+                          j === i ? { ...x, key: e.target.value } : x,
+                        ),
+                      )
                     }
                   />
                   <input
@@ -203,13 +239,19 @@ export default function MonitorForm({
                     placeholder={t("form.headerValue")}
                     value={p.value}
                     onChange={(e) =>
-                      setPairs((prev) => prev.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)))
+                      setPairs((prev) =>
+                        prev.map((x, j) =>
+                          j === i ? { ...x, value: e.target.value } : x,
+                        ),
+                      )
                     }
                   />
                   <button
                     type="button"
                     className="btn-danger px-3"
-                    onClick={() => setPairs((prev) => prev.filter((_, j) => j !== i))}
+                    onClick={() =>
+                      setPairs((prev) => prev.filter((_, j) => j !== i))
+                    }
                   >
                     ✕
                   </button>
@@ -238,7 +280,11 @@ export default function MonitorForm({
       {(type === "tcp" || type === "redis") && (
         <div className="grid grid-cols-2 gap-4">
           <Field label={t("form.host")}>
-            <input className="input" value={form.host ?? ""} onChange={(e) => set("host", e.target.value)} />
+            <input
+              className="input"
+              value={form.host ?? ""}
+              onChange={(e) => set("host", e.target.value)}
+            />
           </Field>
           <Field label={t("form.port")}>
             <input
@@ -253,7 +299,10 @@ export default function MonitorForm({
 
       {type === "redis" && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Field label={t("form.redisPassword")} hint={t("form.redisPasswordHint")}>
+          <Field
+            label={t("form.redisPassword")}
+            hint={t("form.redisPasswordHint")}
+          >
             <input
               type="password"
               className="input"
@@ -262,14 +311,22 @@ export default function MonitorForm({
             />
           </Field>
           <Field label={t("form.redisKey")} hint={t("form.redisKeyHint")}>
-            <input className="input" value={form.redisKey ?? ""} onChange={(e) => set("redisKey", e.target.value)} />
+            <input
+              className="input"
+              value={form.redisKey ?? ""}
+              onChange={(e) => set("redisKey", e.target.value)}
+            />
           </Field>
         </div>
       )}
 
       {type === "ping" && (
         <Field label={t("form.pingHost")} hint={t("form.pingHostHint")}>
-          <input className="input" value={form.host ?? ""} onChange={(e) => set("host", e.target.value)} />
+          <input
+            className="input"
+            value={form.host ?? ""}
+            onChange={(e) => set("host", e.target.value)}
+          />
         </Field>
       )}
 
@@ -277,7 +334,11 @@ export default function MonitorForm({
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Field label={t("form.driver")}>
-              <select className="input" value={form.dbDriver ?? "postgres"} onChange={(e) => set("dbDriver", e.target.value)}>
+              <select
+                className="input"
+                value={form.dbDriver ?? "postgres"}
+                onChange={(e) => set("dbDriver", e.target.value)}
+              >
                 <option value="postgres">PostgreSQL</option>
                 <option value="mysql">MySQL</option>
               </select>
@@ -292,7 +353,11 @@ export default function MonitorForm({
             </Field>
           </div>
           <Field label={t("form.dsn")} hint={t("form.dsnHint")}>
-            <input className="input font-mono text-xs" value={form.dsn ?? ""} onChange={(e) => set("dsn", e.target.value)} />
+            <input
+              className="input font-mono text-xs"
+              value={form.dsn ?? ""}
+              onChange={(e) => set("dsn", e.target.value)}
+            />
           </Field>
           <Field label={t("form.query")} hint={t("form.queryHint")}>
             <textarea
@@ -308,13 +373,25 @@ export default function MonitorForm({
       {type === "dns" && (
         <div className="grid grid-cols-3 gap-4">
           <Field label={t("form.domain")}>
-            <input className="input" value={form.host ?? ""} onChange={(e) => set("host", e.target.value)} />
+            <input
+              className="input"
+              value={form.host ?? ""}
+              onChange={(e) => set("host", e.target.value)}
+            />
           </Field>
           <Field label={t("form.dnsServer")}>
-            <input className="input" value={form.dnsServer ?? ""} onChange={(e) => set("dnsServer", e.target.value)} />
+            <input
+              className="input"
+              value={form.dnsServer ?? ""}
+              onChange={(e) => set("dnsServer", e.target.value)}
+            />
           </Field>
           <Field label={t("form.recordType")}>
-            <select className="input" value={form.recordType ?? "A"} onChange={(e) => set("recordType", e.target.value)}>
+            <select
+              className="input"
+              value={form.recordType ?? "A"}
+              onChange={(e) => set("recordType", e.target.value)}
+            >
               {["A", "AAAA", "CNAME", "MX", "TXT", "NS"].map((r) => (
                 <option key={r} value={r}>
                   {r}
@@ -327,7 +404,11 @@ export default function MonitorForm({
 
       {type === "cert" && (
         <Field label={t("form.certHost")} hint={t("form.certHostHint")}>
-          <input className="input" value={form.host ?? ""} onChange={(e) => set("host", e.target.value)} />
+          <input
+            className="input"
+            value={form.host ?? ""}
+            onChange={(e) => set("host", e.target.value)}
+          />
         </Field>
       )}
 
@@ -363,7 +444,10 @@ export default function MonitorForm({
             />
           </Field>
           {form.pushToken && (
-            <Field label={t("form.heartbeatUrl")} hint={t("form.heartbeatHint")}>
+            <Field
+              label={t("form.heartbeatUrl")}
+              hint={t("form.heartbeatHint")}
+            >
               <input
                 readOnly
                 className="input text-xs"
@@ -425,7 +509,7 @@ export default function MonitorForm({
               e.target.value
                 .split(",")
                 .map((t) => t.trim())
-                .filter(Boolean)
+                .filter(Boolean),
             )
           }
         />
@@ -449,7 +533,7 @@ export default function MonitorForm({
             onChange={(e) =>
               set(
                 "notificationIds",
-                Array.from(e.target.selectedOptions).map((o) => o.value)
+                Array.from(e.target.selectedOptions).map((o) => o.value),
               )
             }
           >
@@ -464,7 +548,9 @@ export default function MonitorForm({
           <select
             className="input"
             value={form.escalationId ?? ""}
-            onChange={(e) => set("escalationId", (e.target.value || null) as any)}
+            onChange={(e) =>
+              set("escalationId", (e.target.value || null) as any)
+            }
           >
             <option value="">{t("form.none")}</option>
             {escalations.map((p) => (
@@ -509,7 +595,9 @@ function Field({
   return (
     <label className="block text-sm">
       <span className="text-slate-300">{label}</span>
-      {hint && <span className="block text-xs text-slate-500 mb-1">{hint}</span>}
+      {hint && (
+        <span className="block text-xs text-slate-500 mb-1">{hint}</span>
+      )}
       <div className="mt-1">{children}</div>
     </label>
   );

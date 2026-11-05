@@ -37,9 +37,7 @@ function MonitorCardInner({
   return (
     <div
       className={`bg-app-panel border rounded-lg p-4 flex items-center gap-4 transition-colors duration-300 ${
-        checking
-          ? "border-sky-500/60 node-checking"
-          : "border-slate-800"
+        checking ? "border-sky-500/60 node-checking" : "border-slate-800"
       } ${!monitor.enabled ? "opacity-60" : ""}`}
     >
       <div className="relative">
@@ -51,9 +49,13 @@ function MonitorCardInner({
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2">
           <span className="font-medium truncate">{monitor.name}</span>
-          <span className="text-xs uppercase text-slate-500">{monitor.type}</span>
+          <span className="text-xs uppercase text-slate-500">
+            {monitor.type}
+          </span>
           {!monitor.enabled && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-amber-400 uppercase">{t("common.paused")}</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-amber-400 uppercase">
+              {t("common.paused")}
+            </span>
           )}
         </div>
         <div className="text-xs text-slate-400 truncate">
@@ -66,7 +68,10 @@ function MonitorCardInner({
         {monitor.tags && monitor.tags.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1">
             {monitor.tags.map((tag) => (
-              <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+              <span
+                key={tag}
+                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400"
+              >
                 {tag}
               </span>
             ))}
@@ -74,28 +79,41 @@ function MonitorCardInner({
         )}
       </div>
       {recentChecks && recentChecks.length > 0 && (
-        <div className="hidden md:flex items-end gap-0.5 h-8" title={t("card.lastChecks")}>
-          {recentChecks.slice(-24).map((c) => (
-            <div
-              key={c.id}
-              className="w-1.5 rounded-sm"
-              style={{
-                height: c.status === "up" ? "40%" : c.status === "degraded" ? "65%" : "90%",
-                backgroundColor:
-                  c.status === "up"
-                    ? "#22c55e"
-                    : c.status === "down"
-                    ? "#ef4444"
-                    : c.status === "degraded"
-                    ? "#eab308"
-                    : "#94a3b8",
-              }}
-            />
-          ))}
+        <div
+          className="hidden md:flex items-end gap-0.5 h-8"
+          title={t("card.lastChecks")}
+        >
+          {recentChecks
+            .slice(0, 24)
+            .reverse()
+            .map((c) => (
+              <div
+                key={c.id}
+                className="w-1.5 rounded-sm"
+                style={{
+                  height:
+                    c.status === "up"
+                      ? "40%"
+                      : c.status === "degraded"
+                        ? "65%"
+                        : "90%",
+                  backgroundColor:
+                    c.status === "up"
+                      ? "#22c55e"
+                      : c.status === "down"
+                        ? "#ef4444"
+                        : c.status === "degraded"
+                          ? "#eab308"
+                          : "#94a3b8",
+                }}
+              />
+            ))}
         </div>
       )}
       <div className="text-right text-xs text-slate-400 w-24">
-        {monitor.lastLatencyMs != null && <div>{Math.round(monitor.lastLatencyMs)} ms</div>}
+        {monitor.lastLatencyMs != null && (
+          <div>{Math.round(monitor.lastLatencyMs)} ms</div>
+        )}
         <div>{timeAgo(monitor.lastCheckAt)}</div>
       </div>
     </div>

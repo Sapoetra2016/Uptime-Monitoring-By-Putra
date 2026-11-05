@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import {
+  Link,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 import { clearToken, getRole, getToken, getUsername } from "./lib/api";
 import { LiveProvider, useLive } from "./hooks/useLive";
 import { useI18n } from "./lib/i18n";
@@ -29,10 +36,16 @@ function Shell({ children }: { children: ReactNode }) {
         <NavLink to="/" active={location.pathname === "/"}>
           {t("nav.dashboard")}
         </NavLink>
-        <NavLink to="/monitors" active={location.pathname.startsWith("/monitors")}>
+        <NavLink
+          to="/monitors"
+          active={location.pathname.startsWith("/monitors")}
+        >
           {t("nav.monitors")}
         </NavLink>
-        <NavLink to="/settings" active={location.pathname.startsWith("/settings")}>
+        <NavLink
+          to="/settings"
+          active={location.pathname.startsWith("/settings")}
+        >
           {t("nav.settings")}
         </NavLink>
         <div className="ml-auto flex items-center gap-3 text-sm">
@@ -41,7 +54,9 @@ function Shell({ children }: { children: ReactNode }) {
             className={`w-2.5 h-2.5 rounded-full ${connected ? "bg-app-up" : "bg-app-down"}`}
             title={connected ? t("live.connected") : t("live.disconnected")}
           />
-          <span className="hidden sm:inline text-slate-400">{connected ? t("nav.live") : t("nav.offline")}</span>
+          <span className="hidden sm:inline text-slate-400">
+            {connected ? t("nav.live") : t("nav.offline")}
+          </span>
           <ProfileMenu />
         </div>
       </nav>
@@ -82,7 +97,8 @@ function ProfileMenu() {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
@@ -103,8 +119,18 @@ function ProfileMenu() {
         <span className="w-8 h-8 rounded-full bg-sky-500/20 text-sky-300 flex items-center justify-center text-sm font-bold uppercase select-none">
           {username.slice(0, 2)}
         </span>
-        <svg width="12" height="12" viewBox="0 0 12 12" className="text-slate-400">
-          <path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
+          className="text-slate-400"
+        >
+          <path
+            d="M2 4l4 4 4-4"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+          />
         </svg>
       </button>
 
@@ -114,20 +140,33 @@ function ProfileMenu() {
             <div className="font-medium truncate">{username}</div>
             <div
               className={`inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded uppercase ${
-                role === "admin" ? "bg-sky-500/15 text-sky-300" : "bg-slate-700 text-slate-300"
+                role === "admin"
+                  ? "bg-sky-500/15 text-sky-300"
+                  : "bg-slate-700 text-slate-300"
               }`}
             >
               {role === "admin" ? t("role.admin") : t("role.viewer")}
             </div>
           </div>
-          <MenuItem label={t("profile.menuSecurity")} onClick={() => go("/settings?tab=profile")} />
-          <MenuItem label={t("profile.menuNotifications")} onClick={() => go("/settings?tab=notifications")} />
-          <MenuItem label={t("profile.menuAll")} onClick={() => go("/settings")} />
+          <MenuItem
+            label={t("profile.menuSecurity")}
+            onClick={() => go("/settings?tab=profile")}
+          />
+          <MenuItem
+            label={t("profile.menuNotifications")}
+            onClick={() => go("/settings?tab=notifications")}
+          />
+          <MenuItem
+            label={t("profile.menuAll")}
+            onClick={() => go("/settings")}
+          />
           <button
             className="w-full text-left px-4 py-2.5 text-sm text-red-300 hover:bg-slate-800 border-t border-slate-800"
             onClick={() => {
+              // Logout lands on the public homepage (RootGate shows the
+              // monitor list when logged out), not the login screen.
               clearToken();
-              window.location.href = "/login";
+              window.location.href = "/";
             }}
           >
             {t("profile.logout")}

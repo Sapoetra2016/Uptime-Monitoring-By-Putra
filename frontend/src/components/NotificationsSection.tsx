@@ -52,7 +52,10 @@ export default function NotificationsSection() {
       await api.testNotification(n.id);
       setTestMsg((m) => ({ ...m, [n.id]: t("notif.sent") }));
     } catch (e: any) {
-      setTestMsg((m) => ({ ...m, [n.id]: t("notif.sendFailed", { msg: e.message }) }));
+      setTestMsg((m) => ({
+        ...m,
+        [n.id]: t("notif.sendFailed", { msg: e.message }),
+      }));
     }
   }
 
@@ -61,7 +64,9 @@ export default function NotificationsSection() {
       <div>
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h2 className="text-lg font-semibold">{t("notif.channelsTitle")}</h2>
+            <h2 className="text-lg font-semibold">
+              {t("notif.channelsTitle")}
+            </h2>
             <p className="text-sm text-slate-400">{t("notif.channelsDesc")}</p>
           </div>
           {isAdmin && (
@@ -93,13 +98,18 @@ export default function NotificationsSection() {
                 <div className="font-medium">{n.name}</div>
                 <div className="text-xs text-slate-400 uppercase">{n.type}</div>
               </div>
-              {testMsg[n.id] && <span className="text-xs text-slate-400">{testMsg[n.id]}</span>}
+              {testMsg[n.id] && (
+                <span className="text-xs text-slate-400">{testMsg[n.id]}</span>
+              )}
               {isAdmin && (
                 <>
                   <button className="btn-secondary" onClick={() => test(n)}>
                     {t("common.test")}
                   </button>
-                  <button className="btn-secondary" onClick={() => setEditing(n)}>
+                  <button
+                    className="btn-secondary"
+                    onClick={() => setEditing(n)}
+                  >
                     {t("common.edit")}
                   </button>
                   <button className="btn-danger" onClick={() => remove(n)}>
@@ -115,7 +125,13 @@ export default function NotificationsSection() {
         </div>
       </div>
 
-      <EscalationSection key={lang} escalations={escalations} notifications={list} onChange={load} canEdit={isAdmin} />
+      <EscalationSection
+        key={lang}
+        escalations={escalations}
+        notifications={list}
+        onChange={load}
+        canEdit={isAdmin}
+      />
     </div>
   );
 }
@@ -156,15 +172,16 @@ function EscalationSection({
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-lg font-semibold">{t("notif.escTitle")}</h2>
-          <p className="text-sm text-slate-400">
-            {t("notif.escDesc")}
-          </p>
+          <p className="text-sm text-slate-400">{t("notif.escDesc")}</p>
         </div>
-      {canEdit && (
-        <button className="btn-primary" onClick={() => setEditing({ name: "", steps: [] })}>
-          {t("notif.addPolicy")}
-        </button>
-      )}
+        {canEdit && (
+          <button
+            className="btn-primary"
+            onClick={() => setEditing({ name: "", steps: [] })}
+          >
+            {t("notif.addPolicy")}
+          </button>
+        )}
       </div>
 
       {error && <div className="text-app-down text-sm mb-2">{error}</div>}
@@ -191,8 +208,13 @@ function EscalationSection({
                   ? t("notif.noSteps")
                   : (p.steps ?? [])
                       .map((s) => {
-                        const n = notifications.find((x) => x.id === s.notifierId);
-                        return t("notif.stepAfter", { m: Math.round(s.afterDownForSec / 60), name: n?.name ?? "?" });
+                        const n = notifications.find(
+                          (x) => x.id === s.notifierId,
+                        );
+                        return t("notif.stepAfter", {
+                          m: Math.round(s.afterDownForSec / 60),
+                          name: n?.name ?? "?",
+                        });
                       })
                       .join(" · ")}
               </div>
@@ -230,7 +252,10 @@ function EscalationForm({
 }) {
   const [policy, setPolicy] = useState<EscalationPolicy>(initial);
 
-  function updateStep(idx: number, patch: Partial<EscalationPolicy["steps"][number]>) {
+  function updateStep(
+    idx: number,
+    patch: Partial<EscalationPolicy["steps"][number]>,
+  ) {
     setPolicy((p) => {
       const steps = (p.steps ?? []).slice();
       steps[idx] = { ...steps[idx], ...patch };
@@ -264,7 +289,9 @@ function EscalationForm({
               type="number"
               className="input w-24"
               value={s.afterDownForSec}
-              onChange={(e) => updateStep(i, { afterDownForSec: Number(e.target.value) })}
+              onChange={(e) =>
+                updateStep(i, { afterDownForSec: Number(e.target.value) })
+              }
             />
             <span className="text-slate-400">{t("notif.secondsNotify")}</span>
             <select
@@ -283,7 +310,10 @@ function EscalationForm({
               type="button"
               className="btn-danger"
               onClick={() =>
-                setPolicy((p) => ({ ...p, steps: (p.steps ?? []).filter((_, idx) => idx !== i) }))
+                setPolicy((p) => ({
+                  ...p,
+                  steps: (p.steps ?? []).filter((_, idx) => idx !== i),
+                }))
               }
             >
               {t("notif.remove")}
@@ -297,7 +327,13 @@ function EscalationForm({
           type="button"
           className="btn-secondary"
           onClick={() =>
-            setPolicy((p) => ({ ...p, steps: [...(p.steps ?? []), { afterDownForSec: 300, notifierId: "" }] }))
+            setPolicy((p) => ({
+              ...p,
+              steps: [
+                ...(p.steps ?? []),
+                { afterDownForSec: 300, notifierId: "" },
+              ],
+            }))
           }
         >
           {t("notif.addStep")}

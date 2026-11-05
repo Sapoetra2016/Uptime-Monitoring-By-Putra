@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import MonitorCard from "../components/MonitorCard";
 import { useMonitorIds, useMonitorStats } from "../hooks/useMonitor";
-import { useLive } from "../hooks/useLive";
 import { api } from "../lib/api";
 import { monitorStore } from "../lib/monitorStore";
 import { t, useI18n } from "../lib/i18n";
@@ -45,7 +44,6 @@ function statusLabel(s: string): string {
 }
 
 export default function Dashboard() {
-  const { connected } = useLive();
   const { lang } = useI18n();
   const ids = useMonitorIds();
   const stats = useMonitorStats();
@@ -62,7 +60,9 @@ export default function Dashboard() {
     (async () => {
       const list = idsKey.split(",");
       const results = await Promise.all(
-        list.map((id) => api.recentChecks(id, 24).catch(() => [] as CheckResult[]))
+        list.map((id) =>
+          api.recentChecks(id, 24).catch(() => [] as CheckResult[]),
+        ),
       );
       if (cancelled) return;
       const map: Record<string, CheckResult[]> = {};
@@ -81,24 +81,63 @@ export default function Dashboard() {
 
   // `stats` re-renders this page on status flips, so reading the current
   // status imperatively from the store here is safe and keeps subscriptions coarse.
-  // Sort by severity so anything Down (then Degraded) automatically floats to the
-  // top; Array.sort is stable, so same-status cards keep their original order.
+  // Group by severity first — anything still Down (then Degraded) stays on top
+  // no matter how old the outage is — and within each status group order by
+  // most-recent STATUS CHANGE, so a service that just flipped (newly down OR
+  // just recovered) floats to the top of its group instead of keeping the
+  // original creation order.
+  // Paused monitors (enabled === false) are hidden from the dashboard entirely
+  // — they are managed on the Monitors page. Status counts exclude them too, so
+  // a paused node never surfaces as DOWN/UP in the stat cards or uptime bar.
+  const activeIds = useMemo(
+    () => ids.filter((id) => monitorStore.getById(id)?.enabled !== false),
+    [ids, stats],
+  );
+
+  const counts = useMemo(() => {
+    let up = 0;
+    let down = 0;
+    let degraded = 0;
+    for (const id of activeIds) {
+      const s = monitorStore.getById(id)?.status;
+      if (s === "up") up++;
+      else if (s === "down") down++;
+      else if (s === "degraded") degraded++;
+    }
+    return { total: activeIds.length, up, down, degraded };
+  }, [activeIds, stats]);
+
   const visibleIds = useMemo(() => {
     const base =
-      filter === "all" ? ids : ids.filter((id) => monitorStore.getById(id)?.status === filter);
+      filter === "all"
+        ? activeIds
+        : activeIds.filter((id) => monitorStore.getById(id)?.status === filter);
+    // last status change wins; fall back to last check, then creation time
+    const since = (id: string): number => {
+      const m = monitorStore.getById(id);
+      const iso = m?.stateSince ?? m?.lastCheckAt ?? m?.createdAt;
+      return iso ? +new Date(iso) : 0;
+    };
+    const sev = (id: string): number =>
+      SEVERITY[monitorStore.getById(id)?.status ?? "unknown"] ?? 5;
     return [...base].sort((a, b) => {
-      const sa = SEVERITY[monitorStore.getById(a)?.status ?? "unknown"] ?? 5;
-      const sb = SEVERITY[monitorStore.getById(b)?.status ?? "unknown"] ?? 5;
-      return sa - sb;
+      const s = sev(a) - sev(b); // DOWN group first, then DEGRADED, …
+      if (s !== 0) return s;
+      return since(b) - since(a); // newest status change first within the group
     });
-  }, [ids, stats, filter]);
+  }, [activeIds, stats, filter]);
 
   // Flatten the last few checks of every monitor into a chronological feed.
   const activity = useMemo(() => {
-    const rows: { id: string; name: string; status: MonitorStatus; at: string }[] = [];
+    const rows: {
+      id: string;
+      name: string;
+      status: MonitorStatus;
+      at: string;
+    }[] = [];
     for (const [id, checks] of Object.entries(recent)) {
       const name = monitorStore.getById(id)?.name || "Monitor";
-      for (const c of checks.slice(-6)) {
+      for (const c of checks.slice(0, 6)) {
         rows.push({ id, name, status: c.status, at: c.createdAt });
       }
     }
@@ -115,8 +154,8 @@ export default function Dashboard() {
       .slice(0, 5);
   }, [ids, stats]);
 
-  const total = stats.total || 0;
-  const uptimePct = total ? Math.round((stats.up / total) * 100) : 0;
+  const total = counts.total || 0;
+  const uptimePct = total ? Math.round((counts.up / total) * 100) : 0;
   const seg = (n: number) => (total ? `${(n / total) * 100}%` : "0%");
   void lang; // re-render when the UI language changes
 
@@ -131,28 +170,52 @@ export default function Dashboard() {
         {/* Main column */}
         <div className="space-y-6 min-w-0">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Stat label={t("dash.statMonitors")} value={stats.total} active={filter === "all"} onClick={() => toggleFilter("all")} />
-            <Stat label={t("dash.statUp")} value={stats.up} color="#22c55e" active={filter === "up"} onClick={() => toggleFilter("up")} />
-            <Stat label={t("dash.statDegraded")} value={stats.degraded} color="#eab308" active={filter === "degraded"} onClick={() => toggleFilter("degraded")} />
-            <Stat label={t("dash.statDown")} value={stats.down} color="#ef4444" active={filter === "down"} onClick={() => toggleFilter("down")} />
+            <Stat
+              label={t("dash.statMonitors")}
+              value={counts.total}
+              active={filter === "all"}
+              onClick={() => toggleFilter("all")}
+            />
+            <Stat
+              label={t("dash.statUp")}
+              value={counts.up}
+              color="#22c55e"
+              active={filter === "up"}
+              onClick={() => toggleFilter("up")}
+            />
+            <Stat
+              label={t("dash.statDegraded")}
+              value={counts.degraded}
+              color="#eab308"
+              active={filter === "degraded"}
+              onClick={() => toggleFilter("degraded")}
+            />
+            <Stat
+              label={t("dash.statDown")}
+              value={counts.down}
+              color="#ef4444"
+              active={filter === "down"}
+              onClick={() => toggleFilter("down")}
+            />
           </div>
-
-          {!connected && (
-            <div className="text-sm bg-app-down/20 border border-app-down/40 text-red-300 rounded p-3">
-              {t("dash.liveWarn")}
-            </div>
-          )}
 
           <div className="grid grid-cols-1 gap-3">
             {ids.length === 0 && (
               <div className="text-slate-400 text-sm">
-                {t("dash.noMonitors")} <Link className="underline" to="/monitors">{t("dash.createOne")}</Link>.
+                {t("dash.noMonitors")}{" "}
+                <Link className="underline" to="/monitors">
+                  {t("dash.createOne")}
+                </Link>
+                .
               </div>
             )}
-            {ids.length > 0 && visibleIds.length === 0 && (
+            {activeIds.length > 0 && visibleIds.length === 0 && (
               <div className="text-slate-400 text-sm">
-                {t("dash.noStatus", { status: statusLabel(filter) })}{' '}
-                <button className="underline text-slate-300" onClick={() => setFilter("all")}>
+                {t("dash.noStatus", { status: statusLabel(filter) })}{" "}
+                <button
+                  className="underline text-slate-300"
+                  onClick={() => setFilter("all")}
+                >
                   {t("dash.showAll")}
                 </button>
                 .
@@ -171,25 +234,35 @@ export default function Dashboard() {
           <Panel title={t("dash.panelOverview")}>
             <div className="flex items-end justify-between mb-3">
               <div>
-                <div className="text-3xl font-bold leading-none">{uptimePct}%</div>
-                <div className="text-xs text-slate-400 mt-1">{t("dash.availabilityNow")}</div>
+                <div className="text-3xl font-bold leading-none">
+                  {uptimePct}%
+                </div>
+                <div className="text-xs text-slate-400 mt-1">
+                  {t("dash.availabilityNow")}
+                </div>
               </div>
               <div className="text-right text-xs text-slate-400 space-y-0.5">
-                <div>{t("dash.countUp", { n: stats.up })}</div>
-                <div>{t("dash.countDegraded", { n: stats.degraded })}</div>
-                <div>{t("dash.countDown", { n: stats.down })}</div>
+                <div>{t("dash.countUp", { n: counts.up })}</div>
+                <div>{t("dash.countDegraded", { n: counts.degraded })}</div>
+                <div>{t("dash.countDown", { n: counts.down })}</div>
               </div>
             </div>
             <div className="flex h-2 rounded-full overflow-hidden bg-slate-800">
-              <span style={{ width: seg(stats.up), background: "#22c55e" }} />
-              <span style={{ width: seg(stats.degraded), background: "#eab308" }} />
-              <span style={{ width: seg(stats.down), background: "#ef4444" }} />
+              <span style={{ width: seg(counts.up), background: "#22c55e" }} />
+              <span
+                style={{ width: seg(counts.degraded), background: "#eab308" }}
+              />
+              <span
+                style={{ width: seg(counts.down), background: "#ef4444" }}
+              />
             </div>
           </Panel>
 
           <Panel title={t("dash.panelActivity")}>
             {activity.length === 0 ? (
-              <div className="text-sm text-slate-500">{t("dash.noActivity")}</div>
+              <div className="text-sm text-slate-500">
+                {t("dash.noActivity")}
+              </div>
             ) : (
               <div className="space-y-0.5">
                 {activity.map((r, i) => (
@@ -198,9 +271,25 @@ export default function Dashboard() {
                     to={`/monitors/${r.id}`}
                     className="flex items-center gap-2 py-1.5 px-1 -mx-1 rounded hover:bg-slate-800/50"
                   >
-                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: STATUS_HEX[r.status] }} />
+                    <span
+                      className="w-0 h-0 shrink-0 border-x-[4px] border-x-transparent"
+                      style={
+                        r.status === "up"
+                          ? { borderBottom: `7px solid ${STATUS_HEX.up}` }
+                          : r.status === "down"
+                            ? { borderTop: `7px solid ${STATUS_HEX.down}` }
+                            : {
+                                width: 8,
+                                height: 8,
+                                borderRadius: "50%",
+                                background: STATUS_HEX[r.status],
+                              }
+                      }
+                    />
                     <span className="text-sm truncate flex-1">{r.name}</span>
-                    <span className="text-[11px] text-slate-500 whitespace-nowrap">{timeAgo(r.at)}</span>
+                    <span className="text-[11px] text-slate-500 whitespace-nowrap">
+                      {timeAgo(r.at)}
+                    </span>
                   </Link>
                 ))}
               </div>
@@ -209,7 +298,9 @@ export default function Dashboard() {
 
           <Panel title={t("dash.panelSlowest")}>
             {slowest.length === 0 ? (
-              <div className="text-sm text-slate-500">{t("dash.noLatency")}</div>
+              <div className="text-sm text-slate-500">
+                {t("dash.noLatency")}
+              </div>
             ) : (
               <div className="space-y-0.5">
                 {slowest.map((m) => (
@@ -218,9 +309,25 @@ export default function Dashboard() {
                     to={`/monitors/${m.id}`}
                     className="flex items-center gap-2 py-1.5 px-1 -mx-1 rounded hover:bg-slate-800/50"
                   >
-                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: STATUS_HEX[m.status] }} />
+                    <span
+                      className="w-0 h-0 shrink-0 border-x-[4px] border-x-transparent"
+                      style={
+                        m.status === "up"
+                          ? { borderBottom: `7px solid ${STATUS_HEX.up}` }
+                          : m.status === "down"
+                            ? { borderTop: `7px solid ${STATUS_HEX.down}` }
+                            : {
+                                width: 8,
+                                height: 8,
+                                borderRadius: "50%",
+                                background: STATUS_HEX[m.status],
+                              }
+                      }
+                    />
                     <span className="text-sm truncate flex-1">{m.name}</span>
-                    <span className="text-xs text-slate-400 tabular-nums">{Math.round(m.lastLatencyMs || 0)} ms</span>
+                    <span className="text-xs text-slate-400 tabular-nums">
+                      {Math.round(m.lastLatencyMs || 0)} ms
+                    </span>
                   </Link>
                 ))}
               </div>
@@ -265,7 +372,10 @@ function Stat({
       title={active ? t("dash.filterAll") : t("dash.filterOnly", { label })}
     >
       <div className="text-xs text-slate-400 uppercase">{label}</div>
-      <div className="text-2xl font-semibold mt-1" style={color ? { color } : undefined}>
+      <div
+        className="text-2xl font-semibold mt-1"
+        style={color ? { color } : undefined}
+      >
         {value}
       </div>
     </button>

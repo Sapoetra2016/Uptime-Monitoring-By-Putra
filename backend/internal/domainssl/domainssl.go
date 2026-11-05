@@ -14,11 +14,17 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/uptime/monitoring/internal/doh"
 )
 
 // SSLInfo describes the leaf certificate presented by host:port.
@@ -49,13 +55,20 @@ func CheckSSL(ctx context.Context, host, port string, timeout time.Duration) SSL
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
-	dialer := &net.Dialer{Timeout: timeout}
-	conn, err := tls.DialWithDialer(dialer, "tcp", net.JoinHostPort(host, port), &tls.Config{
+	// DoH-first dial: local resolvers may return sinkholed IPs for blocked
+	// hosts; TLS verification still uses the real hostname via ServerName.
+	d := doh.NewDialer(timeout)
+	rawConn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(host, port))
+	if err != nil {
+		return SSLInfo{Error: err.Error()}
+	}
+	conn := tls.Client(rawConn, &tls.Config{
 		MinVersion:         tls.VersionTLS12,
 		ServerName:         host,
 		InsecureSkipVerify: false,
 	})
-	if err != nil {
+	if err := conn.HandshakeContext(ctx); err != nil {
+		conn.Close()
 		return SSLInfo{Error: err.Error()}
 	}
 	defer conn.Close()
@@ -107,11 +120,22 @@ func CheckDomainExpiry(ctx context.Context, domain string, timeout time.Duration
 	// 2) Query the TLD's WHOIS server for the full domain record.
 	raw, err := whoisQuery(ctx, server, domain, timeout)
 	if err != nil {
+		// Port-43 WHOIS is blocked from some networks (e.g. Cloudflare
+		// Registrar's server refuses it) — retry over HTTPS via RDAP.
+		if d2 := rdapDomainExpiry(ctx, domain, timeout); d2.OK {
+			return d2
+		}
 		return DomainInfo{Error: "whois failed: " + err.Error()}
 	}
 
 	exp := parseExpiry(raw)
 	reg := findFieldCI(raw, "Registrar")
+	if exp == nil {
+		// Some registrars only expose expiry over RDAP; try HTTPS.
+		if d2 := rdapDomainExpiry(ctx, domain, timeout); d2.OK {
+			return d2
+		}
+	}
 	d := DomainInfo{Registrar: reg, ExpiryDate: exp}
 	if exp != nil {
 		days := int(time.Until(*exp).Hours() / 24)
@@ -122,10 +146,12 @@ func CheckDomainExpiry(ctx context.Context, domain string, timeout time.Duration
 	return DomainInfo{Registrar: reg, Error: "expiry date not found in whois response"}
 }
 
-// whoisQuery opens a TCP connection to server:43, sends query and reads all output.
+// whoisQuery opens a TCP connection to server:43, sends query and reads all
+// output. Uses the DoH-first dialer because WHOIS server hostnames (e.g.
+// whois.discord.com) can also be sinkholed by local resolvers.
 func whoisQuery(ctx context.Context, server, query string, timeout time.Duration) (string, error) {
-	dialer := &net.Dialer{Timeout: timeout}
-	conn, err := dialer.DialContext(ctx, "tcp", server+":43")
+	d := doh.NewDialer(timeout)
+	conn, err := d.DialContext(ctx, "tcp", server+":43")
 	if err != nil {
 		return "", err
 	}
@@ -265,6 +291,179 @@ func registrableTLD(domain string) string {
 		}
 	}
 	return parts[len(parts)-1]
+}
+
+// ---- RDAP (WHOIS over HTTPS) fallback ------------------------------------
+//
+// Plain port-43 WHOIS is refused or filtered from some networks while HTTPS
+// always gets through, so every lookup that fails (or returns no expiry) is
+// retried against the registrar's RDAP endpoint. Bootstrap data comes from
+// IANA's published rdap-bootstrap JSON, cached for a day.
+
+var (
+	rdapBaseOnce sync.Once
+	rdapBaseErr  error
+	rdapEntries  []struct {
+		Service string   `json:"service"`
+		BaseURL string   `json:"base_url"` // may be "" — then use urls[0]
+		URLs    []string `json:"urls"`
+	}
+)
+
+func rdapHTTPClient(timeout time.Duration) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = doh.NewDialer(timeout).DialContext
+	return &http.Client{
+		Timeout:   timeout + 5*time.Second,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if req.URL.Scheme != "https" || len(via) >= 6 {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
+}
+
+// rdapBaseURL returns the registry RDAP base URL whose prefix matches the
+// domain's TLD (longest match wins, so co.id beats id).
+func rdapBaseURL(domain string) (string, error) {
+	rdapBaseOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://data.iana.org/rdap/dns.json", nil)
+		if err != nil {
+			rdapBaseErr = err
+			return
+		}
+		resp, err := rdapHTTPClient(15 * time.Second).Do(req)
+		if err != nil {
+			rdapBaseErr = err
+			return
+		}
+		defer resp.Body.Close()
+		var boot struct {
+			Services [][]interface{} `json:"services"`
+		}
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&boot); err != nil {
+			rdapBaseErr = err
+			return
+		}
+		for _, svc := range boot.Services {
+			// svc = [ [tlds...], { "rdapBase": "https://...", ... } ]
+			if len(svc) < 2 {
+				continue
+			}
+			tlds, ok1 := svc[0].([]interface{})
+			srv, ok2 := svc[1].(map[string]interface{})
+			if !ok1 || !ok2 {
+				continue
+			}
+			base, _ := srv["rdapBase"].(string)
+			for _, t := range tlds {
+				if ts, ok := t.(string); ok {
+					rdapEntries = append(rdapEntries, struct {
+						Service string   `json:"service"`
+						BaseURL string   `json:"base_url"`
+						URLs    []string `json:"urls"`
+					}{Service: ts, BaseURL: base})
+				}
+			}
+		}
+	})
+	if rdapBaseErr != nil {
+		return "", rdapBaseErr
+	}
+	tld := registrableTLD(domain)
+	best := ""
+	for _, e := range rdapEntries {
+		if (e.Service == tld || strings.HasSuffix(tld, "."+e.Service)) && len(e.Service) > len(best) {
+			best = e.BaseURL
+		}
+	}
+	if best == "" {
+		return "", fmt.Errorf("no RDAP endpoint for %s", tld)
+	}
+	return best, nil
+}
+
+// rdapDomainExpiry fetches the domain record over RDAP HTTPS and extracts
+// expiry + registrar from the JSON (RFC 9083 / jcard shapes).
+func rdapDomainExpiry(ctx context.Context, domain string, timeout time.Duration) DomainInfo {
+	base, err := rdapBaseURL(domain)
+	if err != nil {
+		return DomainInfo{Error: err.Error()}
+	}
+	ctx2, cancel := context.WithTimeout(ctx, timeout+10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx2, http.MethodGet, strings.TrimRight(base, "/")+"/domain/"+domain, nil)
+	if err != nil {
+		return DomainInfo{Error: err.Error()}
+	}
+	req.Header.Set("Accept", "application/rdap+json")
+	resp, err := rdapHTTPClient(timeout).Do(req)
+	if err != nil {
+		return DomainInfo{Error: err.Error()}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return DomainInfo{Error: fmt.Sprintf("rdap status %d", resp.StatusCode)}
+	}
+	var doc struct {
+		Events []struct {
+			ActionDescription string `json:"eventAction"`
+			Date              string `json:"eventDate"`
+		} `json:"events"`
+		Entities []struct {
+			Roles      []string      `json:"roles"`
+			VcardArray []interface{} `json:"vcardArray"`
+		} `json:"entities"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&doc); err != nil {
+		return DomainInfo{Error: "rdap parse failed: " + err.Error()}
+	}
+	var exp *time.Time
+	for _, ev := range doc.Events {
+		key := strings.ToLower(strings.ReplaceAll(ev.ActionDescription, " ", ""))
+		if key == "expiration" {
+			if t, perr := time.Parse(time.RFC3339, ev.Date); perr == nil {
+				tt := t
+				exp = &tt
+				break
+			}
+		}
+	}
+	reg := ""
+	for _, ent := range doc.Entities {
+		isRegistrar := false
+		for _, r := range ent.Roles {
+			if strings.EqualFold(r, "registrar") {
+				isRegistrar = true
+			}
+		}
+		if !isRegistrar || len(ent.VcardArray) < 2 {
+			continue
+		}
+		// jcard: ["vcard", [["fn", {}, "text", "Name"], ...]]
+		if items, ok := ent.VcardArray[1].([]interface{}); ok {
+			for _, it := range items {
+				row, ok := it.([]interface{})
+				if !ok || len(row) < 4 {
+					continue
+				}
+				if name, ok := row[0].(string); ok && strings.EqualFold(name, "fn") {
+					if v, ok := row[3].(string); ok {
+						reg = v
+					}
+				}
+			}
+		}
+	}
+	if exp == nil {
+		return DomainInfo{Registrar: reg, Error: "rdap: expiry not found"}
+	}
+	days := int(time.Until(*exp).Hours() / 24)
+	return DomainInfo{Registrar: reg, ExpiryDate: exp, DaysRemaining: &days, OK: true}
 }
 
 // RegistrableDomain reduces a hostname to its registrable domain (e.g.

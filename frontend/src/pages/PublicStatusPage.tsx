@@ -5,7 +5,12 @@ import { UptimeBars, pctLabel } from "../components/UptimeBars";
 import { api } from "../lib/api";
 import { getPrefs } from "../lib/prefs";
 import { t, useI18n } from "../lib/i18n";
-import type { Incident, Monitor, MonitorUptimeStat, StatusPage } from "../lib/types";
+import type {
+  Incident,
+  Monitor,
+  MonitorUptimeStat,
+  StatusPage,
+} from "../lib/types";
 
 interface Payload {
   page: StatusPage;
@@ -54,14 +59,20 @@ export default function PublicStatusPage() {
     return map;
   }, [data]);
 
-  const overallUp = (data?.monitors ?? []).every((m) => m.status === "up" || m.status === "pending");
+  const overallUp = (data?.monitors ?? []).every(
+    (m) => m.status === "up" || m.status === "pending",
+  );
   const pageUptime = data?.uptime ?? 100;
 
   return (
     <div className="min-h-screen max-w-3xl mx-auto px-4 py-10">
       <header className="mb-8">
-        <h1 className="text-2xl font-bold">{data?.page?.title ?? t("psp.titleFallback")}</h1>
-        {data?.page?.description && <p className="text-slate-400 mt-1">{data.page.description}</p>}
+        <h1 className="text-2xl font-bold">
+          {data?.page?.title ?? t("psp.titleFallback")}
+        </h1>
+        {data?.page?.description && (
+          <p className="text-slate-400 mt-1">{data.page.description}</p>
+        )}
         {lastUpdated && (
           <p className="text-xs text-slate-500 mt-2">
             {t("psp.autoUpdate", { time: lastUpdated.toLocaleTimeString() })}
@@ -75,39 +86,55 @@ export default function PublicStatusPage() {
         <>
           <div
             className={`rounded-lg p-4 mb-6 ${
-              overallUp ? "bg-app-up/20 text-green-300" : "bg-app-down/20 text-red-300"
+              overallUp
+                ? "bg-app-up/20 text-green-300"
+                : "bg-app-down/20 text-red-300"
             }`}
           >
             <div className="font-semibold">
               {overallUp ? t("psp.allOperational") : t("psp.issues")}
             </div>
             <div className="text-xs mt-1 opacity-80">
-              {t("psp.uptimeLine", { pct: pctLabel(pageUptime), days: data.days })}
+              {t("psp.uptimeLine", {
+                pct: pctLabel(pageUptime),
+                days: data.days,
+              })}
             </div>
           </div>
 
           {(data.incidents?.length ?? 0) > 0 && (
             <div className="mb-6 space-y-2">
-              <h2 className="text-sm uppercase text-slate-400">{t("psp.activeIncidents")}</h2>
+              <h2 className="text-sm uppercase text-slate-400">
+                {t("psp.activeIncidents")}
+              </h2>
               {(data.incidents ?? []).map((i) => (
-                <div key={i.id} className="bg-app-panel border border-slate-800 rounded p-3 text-sm">
+                <div
+                  key={i.id}
+                  className="bg-app-panel border border-slate-800 rounded p-3 text-sm"
+                >
                   <span className="font-medium">{i.headline}</span>
                   <span className="text-slate-400 ml-2">({i.status})</span>
-                  {i.body && <div className="text-slate-400 mt-1">{i.body}</div>}
+                  {i.body && (
+                    <div className="text-slate-400 mt-1">{i.body}</div>
+                  )}
                 </div>
               ))}
             </div>
           )}
 
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-sm uppercase text-slate-400">{t("pub.services")}</h2>
+            <h2 className="text-sm uppercase text-slate-400">
+              {t("pub.services")}
+            </h2>
             <div className="flex gap-1 text-xs">
               {[7, 30, 90].map((d) => (
                 <button
                   key={d}
                   onClick={() => setDays(d)}
                   className={`px-2 py-0.5 rounded ${
-                    days === d ? "bg-slate-700 text-white" : "bg-slate-800 text-slate-400"
+                    days === d
+                      ? "bg-slate-700 text-white"
+                      : "bg-slate-800 text-slate-400"
                   }`}
                 >
                   {t("pub.daysShort", { n: d })}
@@ -134,13 +161,17 @@ export default function PublicStatusPage() {
                             ? "bg-green-500/15 text-green-400"
                             : "bg-red-500/15 text-red-400"
                         }`}
-                        title={t("pub.sloTargetTitle", { pct: st.sloTargetPct })}
+                        title={t("pub.sloTargetTitle", {
+                          pct: st.sloTargetPct.toFixed(2),
+                        })}
                       >
                         {st.sloMet ? t("pub.sloMet") : t("pub.sloMissed")}
                       </span>
                     )}
                     {m.lastLatencyMs != null && (
-                      <span className="text-xs text-slate-400">{Math.round(m.lastLatencyMs)}ms</span>
+                      <span className="text-xs text-slate-400">
+                        {Math.round(m.lastLatencyMs)}ms
+                      </span>
                     )}
                     <span className="text-sm w-14 text-right tabular-nums">
                       {st ? pctLabel(st.uptimePct) : "—"}

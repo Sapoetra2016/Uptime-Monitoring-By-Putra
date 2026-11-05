@@ -1,4 +1,9 @@
 import type {
+  AlertTemplate,
+  AIProvider,
+  AISettingsInput,
+  AISettingsView,
+  AIStatus,
   CheckResult,
   DomainIntel,
   DomainSSL,
@@ -11,6 +16,7 @@ import type {
   MultiPingResult,
   Notification,
   PublicMonitor,
+  ReportSettings,
   StatusPage,
   SystemSettings,
   User,
@@ -49,7 +55,11 @@ export function setRole(r: UserRole) {
   localStorage.setItem(ROLE_KEY, r);
 }
 
-async function request<T>(path: string, options: RequestInit = {}, skipAuthClear = false): Promise<T> {
+async function request<T>(
+  path: string,
+  options: RequestInit = {},
+  skipAuthClear = false,
+): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
@@ -62,7 +72,9 @@ async function request<T>(path: string, options: RequestInit = {}, skipAuthClear
     res = await fetch(`/api${path}`, { ...options, headers });
   } catch (e: any) {
     // Network-level failure (server unreachable, DNS, CORS preflight, etc.)
-    throw new Error("Cannot reach server — please check that the backend is running");
+    throw new Error(
+      "Cannot reach server — please check that the backend is running",
+    );
   }
   if (res.status === 401) {
     // A 401 while changing the password means "old password incorrect", not
@@ -76,7 +88,9 @@ async function request<T>(path: string, options: RequestInit = {}, skipAuthClear
     // SyntaxError from res.json().
     const text = await res.text().catch(() => "");
     const short = text && text.length < 200 ? text : "";
-    throw new Error(short || `Request failed (${res.status} ${res.statusText})`);
+    throw new Error(
+      short || `Request failed (${res.status} ${res.statusText})`,
+    );
   }
   if (res.status === 204) return undefined as T;
   const text = await res.text();
@@ -92,7 +106,10 @@ async function request<T>(path: string, options: RequestInit = {}, skipAuthClear
 // JSON array. Older backend builds (or a proxy returning an HTML error page)
 // can produce `null` / `undefined`, which crashes downstream `.map()` calls.
 // This guarantees callers always get an array.
-async function requestList<T>(path: string, options: RequestInit = {}): Promise<T[]> {
+async function requestList<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T[]> {
   const data = await request<T | T[] | null | undefined>(path, options);
   if (Array.isArray(data)) return data as T[];
   if (data == null) return [];
@@ -110,7 +127,19 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
 
-  me: () => request<{ username: string; role: UserRole }>("/me"),
+  me: () =>
+    request<{
+      username: string;
+      role: UserRole;
+      displayName?: string;
+      email?: string;
+    }>("/me"),
+
+  updateProfile: (displayName: string, email: string) =>
+    request<{ displayName: string; email: string }>("/me", {
+      method: "PUT",
+      body: JSON.stringify({ displayName, email }),
+    }),
 
   changePassword: (currentPassword: string, newPassword: string) =>
     request<void>(
@@ -128,34 +157,49 @@ export const api = {
   listUsers: () => requestList<User>("/users"),
   createUser: (u: { username: string; password: string; role: UserRole }) =>
     request<User>("/users", { method: "POST", body: JSON.stringify(u) }),
-  deleteUser: (id: string) => request<void>(`/users/${id}`, { method: "DELETE" }),
+  deleteUser: (id: string) =>
+    request<void>(`/users/${id}`, { method: "DELETE" }),
   updateUserRole: (id: string, role: UserRole) =>
-    request<void>(`/users/${id}/role`, { method: "PUT", body: JSON.stringify({ role }) }),
+    request<void>(`/users/${id}/role`, {
+      method: "PUT",
+      body: JSON.stringify({ role }),
+    }),
   updateUserPassword: (id: string, password: string) =>
-    request<void>(`/users/${id}/password`, { method: "PUT", body: JSON.stringify({ password }) }),
+    request<void>(`/users/${id}/password`, {
+      method: "PUT",
+      body: JSON.stringify({ password }),
+    }),
 
   listMonitors: () => requestList<Monitor>("/monitors"),
   getMonitor: (id: string) => request<Monitor>(`/monitors/${id}`),
   createMonitor: (m: Partial<Monitor>) =>
     request<Monitor>("/monitors", { method: "POST", body: JSON.stringify(m) }),
   updateMonitor: (id: string, m: Partial<Monitor>) =>
-    request<Monitor>(`/monitors/${id}`, { method: "PUT", body: JSON.stringify(m) }),
-  deleteMonitor: (id: string) => request<void>(`/monitors/${id}`, { method: "DELETE" }),
+    request<Monitor>(`/monitors/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(m),
+    }),
+  deleteMonitor: (id: string) =>
+    request<void>(`/monitors/${id}`, { method: "DELETE" }),
   setMonitorEnabled: (id: string, enabled: boolean) =>
     request<Monitor>(`/monitors/${id}/enabled`, {
       method: "PUT",
       body: JSON.stringify({ enabled }),
     }),
-  manualCheck: (id: string) => request<{ status: string }>(`/monitors/${id}/check`, { method: "POST" }),
+  manualCheck: (id: string) =>
+    request<{ status: string }>(`/monitors/${id}/check`, { method: "POST" }),
   recentChecks: (id: string, limit = 100) =>
     requestList<CheckResult>(`/monitors/${id}/checks?limit=${limit}`),
   monitorStats: (id: string, hours = 24) =>
-    request<{ stats: MonitorStats; checks: CheckResult[] }>(`/monitors/${id}/stats?hours=${hours}`),
+    request<{ stats: MonitorStats; checks: CheckResult[] }>(
+      `/monitors/${id}/stats?hours=${hours}`,
+    ),
   monitorUptime: (id: string, days = 365) =>
     request<MonitorUptimeStat>(`/monitors/${id}/uptime?days=${days}`),
   domainSsl: (id: string) => request<DomainSSL>(`/monitors/${id}/domain-ssl`),
   // Outside-in domain audit (DNS + email security + headers + SSL detail).
-  domainIntel: (id: string) => request<DomainIntel>(`/monitors/${id}/domain-intel`),
+  domainIntel: (id: string) =>
+    request<DomainIntel>(`/monitors/${id}/domain-intel`),
 
   listAnalyses: (id: string, limit = 5) =>
     requestList<MonitorAnalysis>(`/monitors/${id}/analyses?limit=${limit}`),
@@ -166,21 +210,54 @@ export const api = {
 
   listNotifications: () => requestList<Notification>("/notifications"),
   createNotification: (n: Partial<Notification>) =>
-    request<Notification>("/notifications", { method: "POST", body: JSON.stringify(n) }),
+    request<Notification>("/notifications", {
+      method: "POST",
+      body: JSON.stringify(n),
+    }),
   updateNotification: (id: string, n: Partial<Notification>) =>
-    request<Notification>(`/notifications/${id}`, { method: "PUT", body: JSON.stringify(n) }),
-  deleteNotification: (id: string) => request<void>(`/notifications/${id}`, { method: "DELETE" }),
-  testNotification: (id: string) => request<{ status: string }>(`/notifications/${id}/test`, { method: "POST" }),
+    request<Notification>(`/notifications/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(n),
+    }),
+  deleteNotification: (id: string) =>
+    request<void>(`/notifications/${id}`, { method: "DELETE" }),
+  testNotification: (id: string) =>
+    request<{ status: string }>(`/notifications/${id}/test`, {
+      method: "POST",
+    }),
+  // Send a test alert through an unsaved definition, so credentials can be
+  // verified before the channel is persisted (alerts and report channels).
+  testNotificationPreview: (n: Partial<Notification>) =>
+    request<{ status: string }>("/notifications/test-preview", {
+      method: "POST",
+      body: JSON.stringify(n),
+    }),
+
+  // Reusable notification message templates (email + chat).
+  listTemplates: () => requestList<AlertTemplate>("/templates"),
+  saveTemplates: (list: AlertTemplate[]) =>
+    requestList<AlertTemplate>("/templates", {
+      method: "PUT",
+      body: JSON.stringify(list),
+    }),
 
   listEscalations: () => requestList<EscalationPolicy>("/escalations"),
   upsertEscalation: (p: EscalationPolicy) =>
-    request<EscalationPolicy>("/escalations", { method: "POST", body: JSON.stringify(p) }),
-  deleteEscalation: (id: string) => request<void>(`/escalations/${id}`, { method: "DELETE" }),
+    request<EscalationPolicy>("/escalations", {
+      method: "POST",
+      body: JSON.stringify(p),
+    }),
+  deleteEscalation: (id: string) =>
+    request<void>(`/escalations/${id}`, { method: "DELETE" }),
 
   listStatusPages: () => requestList<StatusPage>("/status-pages"),
   upsertStatusPage: (p: StatusPage) =>
-    request<StatusPage>("/status-pages", { method: "POST", body: JSON.stringify(p) }),
-  deleteStatusPage: (id: string) => request<void>(`/status-pages/${id}`, { method: "DELETE" }),
+    request<StatusPage>("/status-pages", {
+      method: "POST",
+      body: JSON.stringify(p),
+    }),
+  deleteStatusPage: (id: string) =>
+    request<void>(`/status-pages/${id}`, { method: "DELETE" }),
   publicStatusPage: async (slug: string, days = 90) => {
     const res = await request<{
       page: StatusPage;
@@ -219,7 +296,11 @@ export const api = {
   },
 
   listIncidents: (monitorId?: string) =>
-    requestList<Incident>(monitorId ? `/incidents?monitorId=${encodeURIComponent(monitorId)}` : "/incidents"),
+    requestList<Incident>(
+      monitorId
+        ? `/incidents?monitorId=${encodeURIComponent(monitorId)}`
+        : "/incidents",
+    ),
 
   // Real ping from one Globalping probe per available Asian country.
   multiPing: (monitorId: string) =>
@@ -231,8 +312,42 @@ export const api = {
   // Server-wide settings (admin edits, any logged-in role can read).
   getSettings: () => request<SystemSettings>("/settings"),
   saveSettings: (s: SystemSettings) =>
-    request<SystemSettings>("/settings", { method: "PUT", body: JSON.stringify(s) }),
-  publicSettings: () => request<{ title: string; footer: string }>("/public/settings"),
+    request<SystemSettings>("/settings", {
+      method: "PUT",
+      body: JSON.stringify(s),
+    }),
+  applyDefaults: () =>
+    request<{ updated: number }>("/settings/apply-defaults", {
+      method: "POST",
+    }),
+  // AI provider settings (admin edits; status readable by any role).
+  listAIProviders: () => request<AIProvider[]>("/ai/providers"),
+  getAISettings: () => request<AISettingsView>("/settings/ai"),
+  saveAISettings: (s: AISettingsInput) =>
+    request<{ saved: boolean; hasKey: boolean; keyPreview: string }>(
+      "/settings/ai",
+      { method: "PUT", body: JSON.stringify(s) },
+    ),
+  testAISettings: (s: AISettingsInput) =>
+    request<{ ok: boolean; model: string; reply: string }>(
+      "/settings/ai/test",
+      { method: "POST", body: JSON.stringify(s) },
+    ),
+  aiStatus: () => request<AIStatus>("/settings/ai/status"),
+  // Periodic uptime report settings (admin only).
+  getReportSettings: () => request<ReportSettings>("/settings/report"),
+  saveReportSettings: (s: ReportSettings) =>
+    request<ReportSettings>("/settings/report", {
+      method: "PUT",
+      body: JSON.stringify(s),
+    }),
+  sendReportNow: () =>
+    request<{ ok: boolean; subject: string; body: string }>(
+      "/settings/report/send-now",
+      { method: "POST" },
+    ),
+  publicSettings: () =>
+    request<{ title: string; footer: string }>("/public/settings"),
   countChecks: () => request<{ count: number }>("/maintenance/stats"),
   purgeHistory: (olderThanDays: number) =>
     request<{ deleted: number }>("/maintenance/purge-history", {
@@ -240,7 +355,13 @@ export const api = {
       body: JSON.stringify({ olderThanDays }),
     }),
   createIncident: (i: Partial<Incident>) =>
-    request<Incident>("/incidents", { method: "POST", body: JSON.stringify(i) }),
+    request<Incident>("/incidents", {
+      method: "POST",
+      body: JSON.stringify(i),
+    }),
   updateIncident: (id: string, i: Partial<Incident>) =>
-    request<Incident>(`/incidents/${id}`, { method: "PUT", body: JSON.stringify(i) }),
+    request<Incident>(`/incidents/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(i),
+    }),
 };

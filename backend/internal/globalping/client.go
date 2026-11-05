@@ -10,10 +10,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/uptime/monitoring/internal/doh"
 )
 
 const baseURL = "https://api.globalping.io/v1"
@@ -22,10 +24,16 @@ const baseURL = "https://api.globalping.io/v1"
 // Countries without online probes at request time are silently skipped.
 var asiaCountries = []string{"ID", "SG", "MY", "TH", "VN", "PH", "JP", "KR", "TW", "HK", "IN"}
 
-// fallbackAsia is used when the /locations endpoint is slow or unreachable —
-// these countries almost always have online Globalping probes, so a flaky
-// /locations call no longer kills the whole test.
-var fallbackAsia = []string{"SG", "JP", "IN", "HK", "KR", "TW"}
+// fallbackAsia is used when the /locations endpoint is slow or unreachable. It
+// covers the full preferred Asia shortlist (including Indonesia and Malaysia)
+// so the whole region is still represented in the degraded path. If one of
+// these happens to have no online probe right now, MultiPing retries once with
+// conservativeAsia so the test never fails outright.
+var fallbackAsia = []string{"ID", "SG", "MY", "TH", "VN", "PH", "JP", "KR", "TW", "HK", "IN"}
+
+// conservativeAsia is the last-resort shortlist of countries that almost always
+// have at least one online Globalping probe.
+var conservativeAsia = []string{"SG", "JP", "IN", "HK", "KR", "TW"}
 
 // ProbeResult is one row of the multi-country ping outcome.
 type ProbeResult struct {
@@ -50,97 +58,11 @@ type Client struct {
 
 const locationsTTL = 10 * time.Minute
 
-// apiHost is pinned to public DNS-over-HTTPS answers: some Indonesian
-// resolvers return a sinkholed Fastly IP for api.globalping.io (Kominfo
-// filtering) that silently drops TCP 443, while the DoH answer connects.
-const apiHost = "api.globalping.io"
-
-// dohResolver resolves apiHost via Google's DNS-over-HTTPS JSON API using the
-// default transport (which itself uses system DNS for dns.google — that
-// domain is not filtered). Results are cached briefly.
-type dohResolver struct {
-	http  *http.Client
-	mu    sync.Mutex
-	addrs []string
-	at    time.Time
-}
-
-func (d *dohResolver) lookup(ctx context.Context) ([]string, error) {
-	d.mu.Lock()
-	if d.addrs != nil && time.Since(d.at) < 5*time.Minute {
-		out := d.addrs
-		d.mu.Unlock()
-		return out, nil
-	}
-	d.mu.Unlock()
-
-	ctx2, cancel := context.WithTimeout(ctx, 8*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx2, http.MethodGet, "https://dns.google/resolve?name="+apiHost+"&type=A", nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := d.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	var out struct {
-		Answer []struct {
-			Data string `json:"data"`
-		} `json:"Answer"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&out); err != nil {
-		return nil, err
-	}
-	var addrs []string
-	for _, a := range out.Answer {
-		if ip := net.ParseIP(a.Data); ip != nil && ip.To4() != nil {
-			addrs = append(addrs, a.Data)
-		}
-	}
-	if len(addrs) == 0 {
-		return nil, fmt.Errorf("doh returned no IPv4 answers")
-	}
-	d.mu.Lock()
-	d.addrs = addrs
-	d.at = time.Now()
-	d.mu.Unlock()
-	return addrs, nil
-}
-
-// dialContext tries each DoH-resolved IP in order before the caller-level
-// timeout gives up; the first one that completes the TCP handshake wins.
-func (d *dohResolver) dialContext(ctx context.Context, _, addr string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil || host != apiHost {
-		// Anything other than the Globalping API host dials normally.
-		var nd net.Dialer
-		return nd.DialContext(ctx, "tcp", addr)
-	}
-	addrs, derr := d.lookup(ctx)
-	if derr == nil {
-		var nd net.Dialer
-		for _, ip := range addrs {
-			conn, cerr := nd.DialContext(ctx, "tcp", net.JoinHostPort(ip, port))
-			if cerr == nil {
-				return conn, nil
-			}
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			default:
-			}
-		}
-	}
-	var nd net.Dialer
-	return nd.DialContext(ctx, "tcp", addr)
-}
-
 func New() *Client {
-	doh := &dohResolver{http: &http.Client{Timeout: 10 * time.Second}}
+	// DoH-first dial: some Indonesian resolvers return a sinkholed Fastly IP
+	// for api.globalping.io that silently drops TCP 443.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.DialContext = doh.dialContext
+	transport.DialContext = doh.NewDialer(10 * time.Second).DialContext
 	return &Client{http: &http.Client{
 		Timeout:   30 * time.Second,
 		Transport: transport,
@@ -219,13 +141,17 @@ func (c *Client) availableAsia(ctx context.Context) ([]string, error) {
 }
 
 // MultiPing pings target once from each available Asian country and waits
-// (up to ~30s) for the results. Partial results are returned on timeout.
+// (up to ~30s) for the results. Partial results are returned on timeout. If a
+// country in the preferred list happens to have no online probe right now,
+// Globalping rejects the whole measurement (HTTP 422); in that case we retry
+// once with the conservative always-has-probes list so the test still runs.
 func (c *Client) MultiPing(ctx context.Context, target string) ([]ProbeResult, error) {
 	countries, err := c.availableAsia(ctx)
 	if err != nil || len(countries) == 0 {
 		// /locations unreachable or returned nothing usable — use the
-		// always-has-probes fallback list instead of failing the test, and
-		// cache that outcome briefly so we don't re-probe every request.
+		// region-wide fallback (includes Indonesia/Malaysia) instead of
+		// failing the test, and cache that outcome briefly so we don't
+		// re-probe every request.
 		countries = fallbackAsia
 		c.locsMu.Lock()
 		if c.locsCache == nil {
@@ -235,6 +161,18 @@ func (c *Client) MultiPing(ctx context.Context, target string) ([]ProbeResult, e
 		c.locsMu.Unlock()
 	}
 
+	res, merr := c.measure(ctx, target, countries)
+	if merr != nil && strings.Contains(merr.Error(), "(422)") && !sameList(countries, conservativeAsia) {
+		// A requested country had no online probe; drop down to the
+		// conservative list so Indonesia-less countries still return a result.
+		res, merr = c.measure(ctx, target, conservativeAsia)
+	}
+	return res, merr
+}
+
+// measure creates and polls a single Globalping measurement for the given
+// countries, returning one row per probe that reported back.
+func (c *Client) measure(ctx context.Context, target string, countries []string) ([]ProbeResult, error) {
 	locations := make([]map[string]interface{}, 0, len(countries))
 	for _, cc := range countries {
 		locations = append(locations, map[string]interface{}{"country": cc, "limit": 1})
@@ -306,6 +244,19 @@ func (c *Client) MultiPing(ctx context.Context, target string) ([]ProbeResult, e
 		out = append(out, pr)
 	}
 	return out, nil
+}
+
+// sameList reports whether two country shortlists are element-wise identical.
+func sameList(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // validMeasurementID keeps the poll URL path safe: Globalping ids are short

@@ -16,13 +16,23 @@ export function pctLabel(pct: number): string {
   return `${pct.toFixed(pct >= 99.95 ? 2 : 1)}%`;
 }
 
+/** Format a user-set SLO/SLA target exactly as entered (always 2 decimals, no
+ * trailing-zero loss), so 99.6 shows as "99.60%" and 100 as "100.00%". */
+export function sloLabel(pct: number): string {
+  return `${pct.toFixed(2)}%`;
+}
+
 /** A horizontal strip of per-day uptime bars (oldest -> newest). */
 export function UptimeBars({ history }: { history: UptimePoint[] }) {
   const h = history ?? [];
   if (h.length === 0) return null;
   const fmt = (d: string) => {
     const dt = new Date(d + "T00:00:00Z");
-    return dt.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+    return dt.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    });
   };
   return (
     <div className="flex items-end gap-[2px] h-8 mt-3">

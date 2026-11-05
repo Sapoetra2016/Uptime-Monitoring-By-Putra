@@ -53,7 +53,10 @@ function MonitorRowInner({
         </div>
       </td>
       <td className={pad}>
-        <Link to={`/monitors/${monitor.id}`} className="text-slate-100 hover:text-sky-400 font-medium">
+        <Link
+          to={`/monitors/${monitor.id}`}
+          className="text-slate-100 hover:text-sky-400 font-medium"
+        >
           {monitor.name}
         </Link>
       </td>
@@ -70,15 +73,31 @@ function MonitorRowInner({
       <td className={pad}>
         <div className="flex flex-wrap gap-1">
           {(monitor.tags ?? []).map((tag) => (
-            <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+            <span
+              key={tag}
+              className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400"
+            >
               {tag}
             </span>
           ))}
         </div>
       </td>
       <td className={`${pad} text-slate-400`}>{monitor.intervalSec}s</td>
-      <td className={pad}>{monitor.enabled ? t("common.yes") : <span className="text-amber-400">{t("common.paused")}</span>}</td>
-      <td className={`${pad} text-slate-400`} title={monitor.createdBy ? t("mon.addedBy", { name: monitor.createdBy }) : undefined}>
+      <td className={pad}>
+        {monitor.enabled ? (
+          t("common.yes")
+        ) : (
+          <span className="text-amber-400">{t("common.paused")}</span>
+        )}
+      </td>
+      <td
+        className={`${pad} text-slate-400`}
+        title={
+          monitor.createdBy
+            ? t("mon.addedBy", { name: monitor.createdBy })
+            : undefined
+        }
+      >
         {monitor.createdBy || <span className="text-slate-600">—</span>}
       </td>
       {isAdmin && (
@@ -89,7 +108,11 @@ function MonitorRowInner({
             onClick={() => onToggle(monitor)}
             title={monitor.enabled ? t("mon.pauseTitle") : t("mon.resumeTitle")}
           >
-            {toggling ? "…" : monitor.enabled ? t("common.pause") : t("common.resume")}
+            {toggling
+              ? "…"
+              : monitor.enabled
+                ? t("common.pause")
+                : t("common.resume")}
           </button>
           <button className="btn-secondary" onClick={() => onEdit(monitor)}>
             {t("common.edit")}

@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -21,6 +24,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" database/sql driver
 	"github.com/miekg/dns"
 	"github.com/uptime/monitoring/internal/models"
+	"github.com/uptime/monitoring/internal/sysdns"
 )
 
 // CheckOutcome is the raw result produced by a checker before persistence.
@@ -41,28 +45,138 @@ type Checker interface {
 
 // ---------- HTTP ----------
 
+// legacyCipherSuites covers the older suites Go's crypto/tls still implements
+// (static RSA key exchange, ECDHE-CBC, 3DES) up to the modern TLS 1.3 ones.
+// Go omits the legacy suites from its default policy, which makes servers
+// that only offer them fail as "tls: handshake failure". They are never used
+// first — only as a retry after the modern handshake was rejected by the
+// peer. (Finite-field DHE is NOT supported by Go at all; those servers are
+// handled by the curl/openssl fallback below.)
+var legacyCipherSuites = []uint16{
+	// TLS 1.3 (must be listed explicitly once CipherSuites is set)
+	tls.TLS_AES_128_GCM_SHA256,
+	tls.TLS_AES_256_GCM_SHA384,
+	tls.TLS_CHACHA20_POLY1305_SHA256,
+	// Modern TLS 1.2
+	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+	tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+	// Legacy TLS 1.2/1.1/1.0 (static RSA key exchange)
+	tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
+	tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_RSA_WITH_AES_128_CBC_SHA,
+	tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+	tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA,
+}
+
+// isTLSNegotiationError reports whether err looks like the peer refusing our
+// TLS parameters (cipher/protocol mismatch) rather than a certificate problem
+// or a plain network failure. Only these errors justify the legacy retry.
+func isTLSNegotiationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, s := range []string{
+		"handshake failure",
+		"protocol version",
+		"no cipher suite",
+		"unconfigured cipher",
+		"unsupported certificate",
+		"dh key",
+		"legacy",
+	} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// verifyLeafCert keeps the monitor's leaf-only certificate policy: the cert
+// must exist, be inside its validity window and match the host — but the
+// issuing CA chain is not required to terminate in a trusted root.
+func verifyLeafCert(cs tls.ConnectionState) error {
+	if len(cs.PeerCertificates) == 0 {
+		return fmt.Errorf("no certificate presented")
+	}
+	leaf := cs.PeerCertificates[0]
+	now := time.Now()
+	if now.Before(leaf.NotBefore) {
+		return fmt.Errorf("certificate not yet valid (valid from %s)", leaf.NotBefore.Format(time.RFC3339))
+	}
+	if now.After(leaf.NotAfter) {
+		return fmt.Errorf("certificate expired on %s", leaf.NotAfter.Format(time.RFC3339))
+	}
+	if cs.ServerName != "" {
+		if verr := leaf.VerifyHostname(cs.ServerName); verr != nil {
+			return fmt.Errorf("certificate does not match host: %w", verr)
+		}
+	}
+	return nil
+}
+
 type HTTPChecker struct {
 	client         *http.Client
 	insecureClient *http.Client
+	legacyClient   *http.Client
+	timeout        time.Duration
 }
 
 func NewHTTPChecker(timeout time.Duration) *HTTPChecker {
-	strictTransport := &http.Transport{
+	// Follow the server's own DNS (/etc/resolv.conf) with retries, so a brief
+	// SERVFAIL from systemd-resolved doesn't flip a healthy monitor to DOWN.
+	dialer := sysdns.NewDialer(timeout)
+	// Default client validates the certificate itself - that one was presented,
+	// that it is inside its validity window, and that it matches the host - but
+	// it deliberately does NOT require the issuing chain to terminate in a
+	// trusted root. Chain-of-trust / CA analysis belongs to Domain Intelligence,
+	// so an internal server with a self-signed or incomplete-chain certificate
+	// still counts as UP as long as the leaf certificate is otherwise OK. This
+	// is the documented Go custom-verification pattern: InsecureSkipVerify turns
+	// off the built-in chain check and VerifyConnection runs our leaf checks.
+	certOnlyTransport := &http.Transport{
+		DialContext:           dialer.DialContext,
 		TLSHandshakeTimeout:   timeout,
 		ResponseHeaderTimeout: timeout,
 		DisableKeepAlives:     true,
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+			VerifyConnection:   verifyLeafCert,
+		},
 	}
-	// A second client that skips TLS verification, used only when a monitor has
-	// "Ignore SSL" enabled. Default monitors keep strict verification.
+	// A second client that skips TLS verification entirely, used only when a
+	// monitor has "Ignore SSL" enabled.
 	insecureTransport := &http.Transport{
+		DialContext:           dialer.DialContext,
 		TLSHandshakeTimeout:   timeout,
 		ResponseHeaderTimeout: timeout,
 		DisableKeepAlives:     true,
 		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
 	}
+	// Retry client for servers whose TLS stack predates Go's default policy:
+	// down to TLS 1.0 and legacy DHE/RSA/3DES suites, same leaf-cert checks.
+	legacyTransport := &http.Transport{
+		DialContext:           dialer.DialContext,
+		TLSHandshakeTimeout:   timeout,
+		ResponseHeaderTimeout: timeout,
+		DisableKeepAlives:     true,
+		ForceAttemptHTTP2:     false,
+		TLSClientConfig: &tls.Config{
+			MinVersion:         tls.VersionTLS10,
+			CipherSuites:       legacyCipherSuites,
+			InsecureSkipVerify: true,
+			VerifyConnection:   verifyLeafCert,
+		},
+	}
 	return &HTTPChecker{
-		client:         &http.Client{Timeout: timeout, Transport: strictTransport},
+		client:         &http.Client{Timeout: timeout, Transport: certOnlyTransport},
 		insecureClient: &http.Client{Timeout: timeout, Transport: insecureTransport},
+		legacyClient:   &http.Client{Timeout: timeout, Transport: legacyTransport},
+		timeout:        timeout,
 	}
 }
 
@@ -71,20 +185,27 @@ func (c *HTTPChecker) Check(ctx context.Context, m *models.Monitor) (*CheckOutco
 	if method == "" {
 		method = http.MethodGet
 	}
-	var bodyReader io.Reader
-	if m.Body != "" {
-		bodyReader = strings.NewReader(m.Body)
+	buildReq := func() (*http.Request, error) {
+		var bodyReader io.Reader
+		if m.Body != "" {
+			bodyReader = strings.NewReader(m.Body)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, m.URL, bodyReader)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", "UptimeMonitor/1.0")
+		for k, v := range m.Headers {
+			req.Header.Set(k, v)
+		}
+		if m.BasicAuthUser != "" || m.BasicAuthPass != "" {
+			req.SetBasicAuth(m.BasicAuthUser, m.BasicAuthPass)
+		}
+		return req, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, method, m.URL, bodyReader)
+	req, err := buildReq()
 	if err != nil {
 		return &CheckOutcome{Status: models.StatusDown, Message: err.Error()}, nil
-	}
-	req.Header.Set("User-Agent", "UptimeMonitor/1.0")
-	for k, v := range m.Headers {
-		req.Header.Set(k, v)
-	}
-	if m.BasicAuthUser != "" || m.BasicAuthPass != "" {
-		req.SetBasicAuth(m.BasicAuthUser, m.BasicAuthPass)
 	}
 
 	start := time.Now()
@@ -94,6 +215,34 @@ func (c *HTTPChecker) Check(ctx context.Context, m *models.Monitor) (*CheckOutco
 	}
 	resp, err := client.Do(req)
 	latency := float64(time.Since(start).Milliseconds())
+	legacyTLS := false
+	// Stage 2: the peer rejected our modern TLS parameters — retry offering
+	// Go's legacy suites (static RSA kx, CBC, back to TLS 1.0) so dated-but-
+	// alive sites still count as UP.
+	if err != nil && isTLSNegotiationError(err) {
+		if retryReq, rerr := buildReq(); rerr == nil {
+			start = time.Now()
+			if retryResp, rerr2 := c.legacyClient.Do(retryReq); rerr2 == nil {
+				resp, err = retryResp, nil
+				latency = float64(time.Since(start).Milliseconds())
+				legacyTLS = true
+			}
+		}
+	}
+	// Stage 3: servers that ONLY offer finite-field DHE can't be reached by
+	// Go's crypto/tls at all (the kx isn't implemented). curl/openssl still
+	// speak it at a relaxed security level, so probe through them as a last
+	// resort and re-apply our leaf-only certificate policy in Go.
+	if err != nil && isTLSNegotiationError(err) {
+		if code, body, lat, cerr := c.probeViaCurl(ctx, m); cerr == nil {
+			if !m.IgnoreTLS {
+				if verr := leafCertViaOpenSSL(ctx, m.URL, c.timeout); verr != nil {
+					return &CheckOutcome{Status: models.StatusDown, Message: verr.Error(), LatencyMs: ms(lat)}, nil
+				}
+			}
+			return evaluateRawHTTP(m, code, body, lat), nil
+		}
+	}
 	if err != nil {
 		return &CheckOutcome{Status: models.StatusDown, Message: err.Error(), LatencyMs: ms(latency)}, nil
 	}
@@ -132,7 +281,164 @@ func (c *HTTPChecker) Check(ctx context.Context, m *models.Monitor) (*CheckOutco
 	// Latency threshold (degraded) is applied centrally by the engine.
 	outcome.Status = models.StatusUp
 	outcome.Message = "OK"
+	if legacyTLS {
+		outcome.Message = "OK (legacy TLS)"
+		outcome.Meta["legacyTLS"] = true
+	}
 	return outcome, nil
+}
+
+// probeViaCurl runs the check through the system curl binary with TLS
+// security relaxed to SECLEVEL=1, which still negotiates ancient handshakes
+// (static DHE included) that Go's TLS stack refuses or can't implement. It
+// returns the HTTP status code, up to 1 MB of body and the measured latency.
+func (c *HTTPChecker) probeViaCurl(ctx context.Context, m *models.Monitor) (int, []byte, float64, error) {
+	path, err := exec.LookPath("curl")
+	if err != nil {
+		return 0, nil, 0, fmt.Errorf("curl not available for legacy TLS fallback")
+	}
+	tmp, err := os.CreateTemp("", "uptime-curl-body-*")
+	if err != nil {
+		return 0, nil, 0, err
+	}
+	bodyPath := tmp.Name()
+	tmp.Close()
+	defer os.Remove(bodyPath)
+
+	method := m.Method
+	if method == "" {
+		method = http.MethodGet
+	}
+	args := []string{
+		"-s", "-L", "-k",
+		"--ciphers", "ALL:eNULL@SECLEVEL=1",
+		"--max-time", strconv.Itoa(int(c.timeout.Seconds()) + 2),
+		"-o", bodyPath,
+		"-w", "%{http_code} %{time_total}",
+		"-X", method,
+	}
+	for k, v := range m.Headers {
+		args = append(args, "-H", k+": "+v)
+	}
+	if m.BasicAuthUser != "" || m.BasicAuthPass != "" {
+		args = append(args, "-u", m.BasicAuthUser+":"+m.BasicAuthPass)
+	}
+	if m.Body != "" {
+		args = append(args, "--data-binary", "@-")
+	}
+	args = append(args, m.URL)
+
+	cmd := exec.CommandContext(ctx, path, args...)
+	if m.Body != "" {
+		cmd.Stdin = strings.NewReader(m.Body)
+	}
+	start := time.Now()
+	out, err := cmd.Output()
+	latency := float64(time.Since(start).Milliseconds())
+	if err != nil {
+		return 0, nil, latency, fmt.Errorf("curl legacy probe failed: %w", err)
+	}
+	var code int
+	var total float64
+	if _, perr := fmt.Sscanf(strings.TrimSpace(string(out)), "%d %f", &code, &total); perr != nil || code == 0 {
+		return 0, nil, latency, fmt.Errorf("unparsable curl result %q", strings.TrimSpace(string(out)))
+	}
+	f, err := os.Open(bodyPath)
+	if err != nil {
+		return code, nil, latency, nil
+	}
+	defer f.Close()
+	body, _ := io.ReadAll(io.LimitReader(f, 1<<20))
+	return code, body, latency, nil
+}
+
+// evaluateRawHTTP turns a raw status+body probe (curl fallback) into an
+// outcome using the same expected-status / keyword rules as the Go path.
+func evaluateRawHTTP(m *models.Monitor, code int, body []byte, latency float64) *CheckOutcome {
+	expected := m.ExpectedStatus
+	if expected == 0 {
+		expected = http.StatusOK
+	}
+	outcome := &CheckOutcome{
+		LatencyMs:  ms(latency),
+		HTTPStatus: code,
+		Meta:       map[string]interface{}{"legacyTLS": true},
+	}
+	if code != expected {
+		outcome.Status = models.StatusDown
+		outcome.Message = fmt.Sprintf("unexpected status code %d (expected %d)", code, expected)
+		return outcome
+	}
+	if m.Keyword != "" && !strings.Contains(string(body), m.Keyword) {
+		outcome.Status = models.StatusDown
+		outcome.Message = "keyword not found in response body"
+		return outcome
+	}
+	outcome.Status = models.StatusUp
+	outcome.Message = "OK (legacy TLS)"
+	return outcome
+}
+
+// leafCertViaOpenSSL fetches the peer's leaf certificate through the system
+// openssl (again: it can still speak DHE-only handshakes) and applies the
+// same leaf-only policy as verifyLeafCert: present, inside validity, matches
+// the host. If openssl isn't available the check is tolerated (skip), since
+// availability itself was already proven by curl.
+func leafCertViaOpenSSL(ctx context.Context, rawURL string, timeout time.Duration) error {
+	path, err := exec.LookPath("openssl")
+	if err != nil {
+		return nil
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil
+	}
+	host := u.Hostname()
+	port := u.Port()
+	if port == "" {
+		port = "443"
+	}
+	cctx, cancel := context.WithTimeout(ctx, timeout+2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, path,
+		"s_client",
+		"-connect", net.JoinHostPort(host, port),
+		"-servername", host,
+		"-cipher", "ALL:eNULL@SECLEVEL=1",
+		"-showcerts",
+	)
+	cmd.Stdin = strings.NewReader("")
+	cmd.Stderr = io.Discard
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("legacy handshake failed: %w", err)
+	}
+	for rest := out; ; {
+		var blk *pem.Block
+		blk, rest = pem.Decode(rest)
+		if blk == nil {
+			break
+		}
+		if blk.Type != "CERTIFICATE" {
+			continue
+		}
+		leaf, perr := x509.ParseCertificate(blk.Bytes)
+		if perr != nil {
+			continue
+		}
+		now := time.Now()
+		if now.Before(leaf.NotBefore) {
+			return fmt.Errorf("certificate not yet valid (valid from %s)", leaf.NotBefore.Format(time.RFC3339))
+		}
+		if now.After(leaf.NotAfter) {
+			return fmt.Errorf("certificate expired on %s", leaf.NotAfter.Format(time.RFC3339))
+		}
+		if herr := leaf.VerifyHostname(host); herr != nil {
+			return fmt.Errorf("certificate does not match host: %w", herr)
+		}
+		return nil
+	}
+	return fmt.Errorf("no certificate presented")
 }
 
 // ---------- TCP ----------
@@ -147,7 +453,7 @@ func (c *TCPChecker) Check(ctx context.Context, m *models.Monitor) (*CheckOutcom
 		timeout = c.defaultTimeout
 	}
 	addr := net.JoinHostPort(m.Host, fmt.Sprintf("%d", m.Port))
-	d := net.Dialer{Timeout: timeout}
+	d := sysdns.NewDialer(timeout)
 
 	start := time.Now()
 	conn, err := d.DialContext(ctx, "tcp", addr)
@@ -234,16 +540,46 @@ func (c *CertChecker) Check(ctx context.Context, m *models.Monitor) (*CheckOutco
 		port = "443"
 	}
 
-	dialer := &net.Dialer{Timeout: timeout}
+	// Dial through sysdns (resolv.conf-aware, with retry), then wrap in TLS
+	// manually because tls.DialWithDialer only accepts a plain net.Dialer.
+	dialer := sysdns.NewDialer(timeout)
 	start := time.Now()
-	conn, err := tls.DialWithDialer(dialer, "tcp", net.JoinHostPort(host, port), &tls.Config{
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: false,
-	})
-	latency := float64(time.Since(start).Milliseconds())
+	rawConn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, port))
 	if err != nil {
-		return &CheckOutcome{Status: models.StatusDown, Message: err.Error(), LatencyMs: ms(latency)}, nil
+		return &CheckOutcome{Status: models.StatusDown, Message: err.Error(), LatencyMs: ms(float64(time.Since(start).Milliseconds()))}, nil
 	}
+	conn := tls.Client(rawConn, &tls.Config{
+		ServerName: host,
+		MinVersion: tls.VersionTLS12,
+		// Cert monitoring reports expiry; it must still be able to read the leaf
+		// when the issuing chain isn't trusted (self-signed / incomplete chain),
+		// so the trusted-root check is skipped here too.
+		InsecureSkipVerify: true,
+	})
+	legacyTLS := false
+	if herr := conn.HandshakeContext(ctx); herr != nil {
+		rawConn.Close()
+		// Same adaptive retry as the HTTP checker: if the peer rejected our
+		// modern TLS parameters, offer legacy suites/protocols before giving up
+		// so dated-but-alive sites still report their certificate.
+		if isTLSNegotiationError(herr) {
+			if rawConn, err = dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, port)); err == nil {
+				conn = tls.Client(rawConn, &tls.Config{
+					ServerName:         host,
+					MinVersion:         tls.VersionTLS10,
+					CipherSuites:       legacyCipherSuites,
+					InsecureSkipVerify: true,
+				})
+				herr = conn.HandshakeContext(ctx)
+				legacyTLS = true
+			}
+		}
+		if herr != nil {
+			rawConn.Close()
+			return &CheckOutcome{Status: models.StatusDown, Message: herr.Error(), LatencyMs: ms(float64(time.Since(start).Milliseconds()))}, nil
+		}
+	}
+	latency := float64(time.Since(start).Milliseconds())
 	defer conn.Close()
 
 	certs := conn.ConnectionState().PeerCertificates
@@ -263,10 +599,17 @@ func (c *CertChecker) Check(ctx context.Context, m *models.Monitor) (*CheckOutco
 	if daysRemaining < 0 {
 		return &CheckOutcome{Status: models.StatusDown, LatencyMs: ms(latency), Message: fmt.Sprintf("certificate expired %d day(s) ago", -daysRemaining), Meta: meta}, nil
 	}
+	if legacyTLS {
+		meta["legacyTLS"] = true
+	}
 	if daysRemaining <= warnDays {
 		return &CheckOutcome{Status: models.StatusDegraded, LatencyMs: ms(latency), Message: fmt.Sprintf("certificate expires in %d day(s)", daysRemaining), Meta: meta}, nil
 	}
-	return &CheckOutcome{Status: models.StatusUp, LatencyMs: ms(latency), Message: fmt.Sprintf("certificate valid, %d day(s) remaining", daysRemaining), Meta: meta}, nil
+	msg := fmt.Sprintf("certificate valid, %d day(s) remaining", daysRemaining)
+	if legacyTLS {
+		msg += " (legacy TLS)"
+	}
+	return &CheckOutcome{Status: models.StatusUp, LatencyMs: ms(latency), Message: msg, Meta: meta}, nil
 }
 
 // ---------- Push / Heartbeat ----------
@@ -431,7 +774,7 @@ func (c *RedisChecker) Check(ctx context.Context, m *models.Monitor) (*CheckOutc
 		port = 6379
 	}
 
-	d := net.Dialer{Timeout: timeout}
+	d := sysdns.NewDialer(timeout)
 	start := time.Now()
 	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {

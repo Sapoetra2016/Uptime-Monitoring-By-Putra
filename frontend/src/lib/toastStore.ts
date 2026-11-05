@@ -7,7 +7,7 @@
  * after AUTO_DISMISS_MS (10s) so the user never has to close them manually.
  */
 
-export type ToastKind = "down" | "recovered";
+export type ToastKind = "down" | "recovered" | "offline";
 
 export interface Toast {
   id: number;
@@ -15,6 +15,8 @@ export interface Toast {
   title: string;
   message?: string;
   at: number;
+  // Sticky toasts stay until explicitly dismissed (used by the offline alert).
+  sticky?: boolean;
 }
 
 const AUTO_DISMISS_MS = 10_000;
@@ -33,12 +35,29 @@ class ToastStore {
     return () => this.listeners.delete(cb);
   };
 
-  push(kind: ToastKind, title: string, message?: string): void {
-    const toast: Toast = { id: this.nextId++, kind, title, message, at: Date.now() };
+  push(kind: ToastKind, title: string, message?: string, sticky = false): void {
+    // Only one offline alert at a time — don't stack duplicates.
+    if (sticky) this.dismissKind(kind);
+    const toast: Toast = {
+      id: this.nextId++,
+      kind,
+      title,
+      message,
+      at: Date.now(),
+      sticky,
+    };
     // Newest at the bottom so the stack grows upward from the corner.
     this.toasts = [...this.toasts, toast];
     this.emit();
-    window.setTimeout(() => this.dismiss(toast.id), AUTO_DISMISS_MS);
+    if (!sticky)
+      window.setTimeout(() => this.dismiss(toast.id), AUTO_DISMISS_MS);
+  }
+
+  // Remove every toast of a kind (e.g. clear the offline alert on reconnect).
+  dismissKind(kind: ToastKind): void {
+    if (!this.toasts.some((t) => t.kind === kind)) return;
+    this.toasts = this.toasts.filter((t) => t.kind !== kind);
+    this.emit();
   }
 
   dismiss(id: number): void {

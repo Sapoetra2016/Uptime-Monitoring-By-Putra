@@ -62,8 +62,36 @@ func NewEngine(st *store.Store, hub *events.Hub, notifier NotifierHook, defaultT
 	}
 }
 
-// SetAIClient enables automatic AI root-cause analysis on down events.
-func (e *Engine) SetAIClient(c *ai.Client) { e.ai = c }
+// SetAIClient enables automatic AI root-cause analysis on down events. It
+// stores the env-configured client, used only as a fallback when no AI
+// settings are saved in the database.
+func (e *Engine) SetAIClient(c *ai.Client) {
+	e.aiMu.Lock()
+	defer e.aiMu.Unlock()
+	e.ai = c
+}
+
+// resolveAIClient returns the effective LLM client for this analysis run. It
+// prefers the admin-configured Settings → AI (read fresh from the DB so
+// changes apply without a restart) and falls back to the env-configured client
+// when AI settings are absent/disabled. Returns nil when nothing is usable.
+func (e *Engine) resolveAIClient(ctx context.Context) *ai.Client {
+	if set, err := e.store.GetAISettings(ctx); err == nil && set.Enabled && strings.TrimSpace(set.APIKey) != "" {
+		base, model := ai.ResolveEndpoint(set.Provider, set.BaseURL, set.Model)
+		if base != "" && model != "" {
+			return ai.NewClient(ai.Config{APIKey: set.APIKey, BaseURL: base, Model: model})
+		}
+	}
+	e.aiMu.Lock()
+	defer e.aiMu.Unlock()
+	if e.ai != nil && e.ai.Enabled() {
+		return e.ai
+	}
+	return nil
+}
+
+// aiConfigured reports whether an LLM client is available right now.
+func (e *Engine) aiConfigured(ctx context.Context) bool { return e.resolveAIClient(ctx) != nil }
 
 func (e *Engine) Start(ctx context.Context) error {
 	ctx, e.cancel = context.WithCancel(ctx)
@@ -122,13 +150,32 @@ func (e *Engine) Remove(monitorID string) {
 	}
 }
 
+// staggerOffset maps a monitor ID to a deterministic 0..8s offset used to
+// spread first checks (and hence ticker phases) across a window.
+func staggerOffset(id string) time.Duration {
+	var sum uint64
+	for _, ch := range id {
+		sum = (sum*131 + uint64(ch)) % 1000003
+	}
+	return time.Duration(sum%8000) * time.Millisecond
+}
+
 func (e *Engine) loop(ctx context.Context, m *models.Monitor) {
 	interval := time.Duration(m.IntervalSec) * time.Second
 	if interval <= 0 {
 		interval = 60 * time.Second
 	}
 
-	// immediate first check
+	// Staggered first check: without this, a restart (or a bulk apply-defaults
+	// re-Run) aligns every runner's ticker to the same second, so 60+ probes
+	// fire simultaneously — the burst saturates the DNS resolver/uplink and
+	// pushes slow-but-healthy sites past their timeout. The offset is derived
+	// from the monitor ID so phases stay stable across restarts.
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(staggerOffset(m.ID)):
+	}
 	e.checkOnce(ctx, m)
 
 	ticker := time.NewTicker(interval)
@@ -255,7 +302,7 @@ func (e *Engine) persistAndBroadcast(ctx context.Context, m *models.Monitor, out
 	}
 	// Fire an async LLM analysis only on transitions into Down (not degraded),
 	// debounced per monitor so flapping services don't burn API quota.
-	if changed && outcome.Status == models.StatusDown && e.ai != nil && e.ai.Enabled() && e.tryClaimAnalysis(m.ID) {
+	if changed && outcome.Status == models.StatusDown && e.aiConfigured(ctx) && e.tryClaimAnalysis(m.ID) {
 		go e.runAnalysis(context.Background(), m, outcome, "auto")
 	}
 	if changed && outcome.Status == models.StatusUp && e.notifier != nil {
@@ -350,13 +397,13 @@ func (e *Engine) tryClaimAnalysis(monitorID string) bool {
 }
 
 // AIEnabled reports whether the LLM analysis feature is configured.
-func (e *Engine) AIEnabled() bool { return e.ai != nil && e.ai.Enabled() }
+func (e *Engine) AIEnabled(ctx context.Context) bool { return e.aiConfigured(ctx) }
 
 // AnalyzeSync runs an on-demand analysis (admin "Re-analyze" button) and
 // persists the result. It blocks until the LLM responds.
 func (e *Engine) AnalyzeSync(ctx context.Context, m *models.Monitor) (*models.MonitorAnalysis, error) {
-	if !e.AIEnabled() {
-		return nil, fmt.Errorf("AI analysis is not configured on this server")
+	if !e.aiConfigured(ctx) {
+		return nil, fmt.Errorf("AI analysis is not configured")
 	}
 	outcome, err := e.runAnalysis(ctx, m, nil, "manual")
 	if err != nil {
@@ -368,6 +415,10 @@ func (e *Engine) AnalyzeSync(ctx context.Context, m *models.Monitor) (*models.Mo
 // runAnalysis collects monitor context + recent checks, asks the LLM for a
 // root-cause report, stores it, and returns the persisted analysis.
 func (e *Engine) runAnalysis(ctx context.Context, m *models.Monitor, outcome *CheckOutcome, trigger string) (*models.MonitorAnalysis, error) {
+	client := e.resolveAIClient(ctx)
+	if client == nil {
+		return nil, fmt.Errorf("AI analysis is not configured")
+	}
 	checks, _ := e.store.RecentChecks(ctx, m.ID, 20)
 	sys, user := buildAnalysisPrompt(m, outcome, checks)
 
@@ -375,7 +426,7 @@ func (e *Engine) runAnalysis(ctx context.Context, m *models.Monitor, outcome *Ch
 	actx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 
-	text, err := e.ai.Chat(actx, sys, user)
+	text, err := client.Chat(actx, sys, user)
 	if err != nil {
 		log.Printf("[ai] analysis for monitor %s (%s): %v", m.ID, trigger, err)
 		return nil, err
@@ -388,7 +439,7 @@ func (e *Engine) runAnalysis(ctx context.Context, m *models.Monitor, outcome *Ch
 		MonitorID: m.ID,
 		Status:    status,
 		Analysis:  text,
-		Model:     e.ai.Model(),
+		Model:     client.Model(),
 	}
 	if err := e.store.InsertAnalysis(actx, a); err != nil {
 		log.Printf("[ai] store analysis for %s: %v", m.ID, err)

@@ -1,6 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, setUsername as storeUsername, setRole, setToken } from "../lib/api";
+import {
+  api,
+  setUsername as storeUsername,
+  setRole,
+  setToken,
+} from "../lib/api";
 import { useI18n } from "../lib/i18n";
 
 export default function LoginPage() {
@@ -33,7 +38,9 @@ export default function LoginPage() {
       <button
         onClick={() => setLanguage(lang === "id" ? "en" : "id")}
         className="absolute top-4 right-4 text-xs px-2 py-1 rounded border border-slate-700 text-slate-400 hover:text-white uppercase"
-        title={lang === "id" ? "Ganti ke English" : "Switch to Bahasa Indonesia"}
+        title={
+          lang === "id" ? "Ganti ke English" : "Switch to Bahasa Indonesia"
+        }
       >
         {lang === "id" ? "ID" : "EN"}
       </button>
@@ -43,14 +50,18 @@ export default function LoginPage() {
       >
         <h1 className="text-xl font-bold mb-1">Uptime Monitoring</h1>
         <p className="text-sm text-slate-400 mb-6">{t("login.subtitle")}</p>
-        <label className="block text-sm mb-1 text-slate-300">{t("login.username")}</label>
+        <label className="block text-sm mb-1 text-slate-300">
+          {t("login.username")}
+        </label>
         <input
           className="w-full mb-4 bg-slate-900 border border-slate-700 rounded px-3 py-2"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           autoFocus
         />
-        <label className="block text-sm mb-1 text-slate-300">{t("login.password")}</label>
+        <label className="block text-sm mb-1 text-slate-300">
+          {t("login.password")}
+        </label>
         <input
           type="password"
           className="w-full mb-4 bg-slate-900 border border-slate-700 rounded px-3 py-2"

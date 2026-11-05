@@ -49,7 +49,9 @@ export class ErrorBoundary extends Component<Props, State> {
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
         <div className="bg-app-panel border border-slate-800 rounded-lg p-6 max-w-2xl w-full space-y-4">
-          <h2 className="text-lg font-semibold text-app-down">{t("eb.title")}</h2>
+          <h2 className="text-lg font-semibold text-app-down">
+            {t("eb.title")}
+          </h2>
           <p className="text-sm text-slate-300">{t("eb.desc")}</p>
           <pre className="text-xs bg-slate-900 border border-slate-800 rounded p-3 overflow-auto max-h-32 text-slate-400 whitespace-pre-wrap">
             {err.message || String(err)}

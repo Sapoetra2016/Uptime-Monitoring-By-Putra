@@ -18,6 +18,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/gorilla/websocket"
+	"github.com/uptime/monitoring/internal/ai"
 	"github.com/uptime/monitoring/internal/auth"
 	"github.com/uptime/monitoring/internal/domainssl"
 	"github.com/uptime/monitoring/internal/events"
@@ -25,7 +26,9 @@ import (
 	"github.com/uptime/monitoring/internal/models"
 	"github.com/uptime/monitoring/internal/monitor"
 	"github.com/uptime/monitoring/internal/notifier"
+	"github.com/uptime/monitoring/internal/report"
 	"github.com/uptime/monitoring/internal/store"
+	"github.com/uptime/monitoring/internal/sysdns"
 )
 
 type Server struct {
@@ -33,6 +36,7 @@ type Server struct {
 	Engine         *monitor.Engine
 	Hub            *events.Hub
 	Notifier       *notifier.Dispatcher
+	Reports        *report.Scheduler
 	Auth           *auth.Authenticator
 	GP             *globalping.Client
 	AllowedOrigins []string
@@ -95,8 +99,11 @@ func (s *Server) Router() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireAuth)
 		r.Get("/api/me", s.handleMe)
+		r.Put("/api/me", s.handleUpdateProfile)
 		r.Put("/api/me/password", s.handleChangePassword)
 		r.Get("/api/settings", s.handleGetSystemSettings)
+		r.Get("/api/settings/ai/status", s.handleAIStatus)
+		r.Get("/api/ai/providers", s.handleAIProviders)
 		r.Get("/api/monitors", s.handleListMonitors)
 		r.Get("/api/monitors/{id}", s.handleGetMonitor)
 		r.Get("/api/monitors/{id}/checks", s.handleRecentChecks)
@@ -107,6 +114,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/monitors/{id}/domain-intel", s.handleMonitorDomainIntel)
 
 		r.Get("/api/notifications", s.handleListNotifications)
+		r.Get("/api/templates", s.handleListTemplates)
 		r.Get("/api/escalations", s.handleListEscalations)
 		r.Get("/api/status-pages", s.handleListStatusPages)
 		r.Get("/api/incidents", s.handleListIncidents)
@@ -127,6 +135,9 @@ func (s *Server) Router() http.Handler {
 			r.Put("/api/notifications/{id}", s.handleUpdateNotification)
 			r.Delete("/api/notifications/{id}", s.handleDeleteNotification)
 			r.Post("/api/notifications/{id}/test", s.handleTestNotification)
+			r.Post("/api/notifications/test-preview", s.handleTestNotificationPreview)
+
+			r.Put("/api/templates", s.handleSaveTemplates)
 
 			r.Post("/api/escalations", s.handleUpsertEscalation)
 			r.Delete("/api/escalations/{id}", s.handleDeleteEscalation)
@@ -144,6 +155,13 @@ func (s *Server) Router() http.Handler {
 			r.Put("/api/users/{id}/password", s.handleUpdateUserPassword)
 
 			r.Put("/api/settings", s.handleSetSystemSettings)
+			r.Post("/api/settings/apply-defaults", s.handleApplyDefaults)
+			r.Get("/api/settings/ai", s.handleGetAISettings)
+			r.Put("/api/settings/ai", s.handleSaveAISettings)
+			r.Post("/api/settings/ai/test", s.handleTestAISettings)
+			r.Get("/api/settings/report", s.handleGetReportSettings)
+			r.Put("/api/settings/report", s.handleSaveReportSettings)
+			r.Post("/api/settings/report/send-now", s.handleSendReportNow)
 			r.Get("/api/maintenance/stats", s.handleMaintenanceStats)
 			r.Post("/api/maintenance/purge-history", s.handlePurgeHistory)
 		})
@@ -199,7 +217,47 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"username": claims.Username, "role": claims.Role})
+	displayName, email, err := s.Store.GetUserProfile(r.Context(), claims.Sub)
+	if err != nil {
+		// missing row must not break the identity lookup
+		displayName, email = "", ""
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"username":    claims.Username,
+		"role":        claims.Role,
+		"displayName": displayName,
+		"email":       email,
+	})
+}
+
+// handleUpdateProfile lets any logged-in user edit their own display name and
+// email. Username/role stay admin-managed and the password has its own
+// dedicated endpoint.
+func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
+	claims := currentClaims(r)
+	if claims == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		DisplayName string `json:"displayName"`
+		Email       string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	req.DisplayName = strings.TrimSpace(req.DisplayName)
+	req.Email = strings.TrimSpace(req.Email)
+	if req.Email != "" && (!strings.Contains(req.Email, "@") || !strings.Contains(req.Email, ".") || len(req.Email) > 254) {
+		http.Error(w, "invalid email address", http.StatusBadRequest)
+		return
+	}
+	if err := s.Store.UpdateUserProfile(r.Context(), claims.Sub, req.DisplayName, req.Email); err != nil {
+		httpError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"displayName": req.DisplayName, "email": req.Email})
 }
 
 // handleChangePassword lets any logged-in user change their own password.
@@ -287,6 +345,10 @@ func (s *Server) handleSetSystemSettings(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "retention must be 0 (keep forever) or at least 7 days", http.StatusBadRequest)
 		return
 	}
+	if req.DefaultSloTargetPct < 0 || req.DefaultSloTargetPct > 100 {
+		http.Error(w, "default SLO target must be between 0 and 100 percent", http.StatusBadRequest)
+		return
+	}
 	if strings.TrimSpace(req.PublicTitle) == "" {
 		req.PublicTitle = defaults.PublicTitle
 	}
@@ -303,6 +365,285 @@ func (s *Server) handleSetSystemSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, req)
+}
+
+// handleApplyDefaults bulk-overwrites the interval, timeout and SLO target of
+// every monitor with the current global defaults (Settings → Umum), then hot
+// swaps each runner so the new schedule takes effect without a restart.
+func (s *Server) handleApplyDefaults(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sys, err := s.Store.GetSystemSettings(ctx)
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+	updated, err := s.Store.ApplyDefaultsToAllMonitors(ctx, sys.DefaultCheckIntervalSec, sys.DefaultTimeoutSec, sys.DefaultSloTargetPct)
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+	// Reload every runner so the new interval/timeout is applied immediately.
+	monitors, err := s.Store.ListMonitors(ctx)
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+	for i := range monitors {
+		m := &monitors[i]
+		s.Engine.Remove(m.ID)
+		if m.Enabled {
+			s.Engine.Run(m)
+		}
+	}
+	s.broadcastMonitorList(ctx)
+	writeJSON(w, http.StatusOK, map[string]int64{"updated": updated})
+}
+
+// maskKey returns a display-safe preview of an API key (last 4 chars only) so
+// the settings UI can show something without ever exposing the secret.
+func maskKey(k string) string {
+	k = strings.TrimSpace(k)
+	if k == "" {
+		return ""
+	}
+	if len(k) <= 4 {
+		return "••••"
+	}
+	return "••••" + k[len(k)-4:]
+}
+
+// handleGetAISettings returns the AI provider config with the API key masked.
+func (s *Server) handleGetAISettings(w http.ResponseWriter, r *http.Request) {
+	set, err := s.Store.GetAISettings(r.Context())
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled":    set.Enabled,
+		"provider":   set.Provider,
+		"baseUrl":    set.BaseURL,
+		"model":      set.Model,
+		"hasKey":     strings.TrimSpace(set.APIKey) != "",
+		"keyPreview": maskKey(set.APIKey),
+	})
+}
+
+// handleSaveAISettings persists the AI provider config. An empty incoming API
+// key means "keep the stored one" (the UI never receives the plaintext key).
+func (s *Server) handleSaveAISettings(w http.ResponseWriter, r *http.Request) {
+	var req models.AISettings
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	existing, err := s.Store.GetAISettings(r.Context())
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+	if strings.TrimSpace(req.APIKey) == "" {
+		req.APIKey = existing.APIKey
+	}
+	req.Provider = strings.TrimSpace(req.Provider)
+	req.BaseURL = strings.TrimSpace(req.BaseURL)
+	req.Model = strings.TrimSpace(req.Model)
+	if err := s.Store.SaveAISettings(r.Context(), req); err != nil {
+		httpError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"saved":      true,
+		"hasKey":     strings.TrimSpace(req.APIKey) != "",
+		"keyPreview": maskKey(req.APIKey),
+	})
+}
+
+// handleTestAISettings sends a tiny completion using the submitted (or stored)
+// config so the admin can verify the provider/key before saving.
+func (s *Server) handleTestAISettings(w http.ResponseWriter, r *http.Request) {
+	var req models.AISettings
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	existing, _ := s.Store.GetAISettings(r.Context())
+	if strings.TrimSpace(req.APIKey) == "" {
+		req.APIKey = existing.APIKey
+	}
+	base, model := ai.ResolveEndpoint(req.Provider, req.BaseURL, req.Model)
+	if strings.TrimSpace(req.APIKey) == "" || base == "" || model == "" {
+		http.Error(w, "provider, model and API key are all required to test", http.StatusBadRequest)
+		return
+	}
+	client := ai.NewClient(ai.Config{APIKey: req.APIKey, BaseURL: base, Model: model})
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	reply, err := client.Chat(ctx, "You are a connectivity check.", "Reply with the single word: OK")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "model": model, "reply": reply})
+}
+
+// handleAIStatus exposes just enough (no key) for the monitor-detail badge and
+// the "not configured" hint to reflect the admin's choice. Any role can read.
+func (s *Server) handleAIStatus(w http.ResponseWriter, r *http.Request) {
+	set, err := s.Store.GetAISettings(r.Context())
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+	enabled := set.Enabled && strings.TrimSpace(set.APIKey) != ""
+	_, model := ai.ResolveEndpoint(set.Provider, set.BaseURL, set.Model)
+	name := ""
+	if p := ai.ProviderByID(set.Provider); p != nil {
+		name = p.Name
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled":      enabled,
+		"provider":     set.Provider,
+		"providerName": name,
+		"model":        model,
+	})
+}
+
+// handleAIProviders lists the built-in provider presets for the dropdown.
+func (s *Server) handleAIProviders(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, ai.Providers)
+}
+
+// ---------- Report settings ----------
+
+// normalizeReportSettings applies defaults and validates the submitted report
+// config, returning a human-readable error when something is out of range.
+func normalizeReportSettings(set *models.ReportSettings) error {
+	switch set.Frequency {
+	case "", "daily", "weekly", "monthly":
+	default:
+		return fmt.Errorf("invalid frequency %q", set.Frequency)
+	}
+	if set.Frequency == "" {
+		set.Frequency = "weekly"
+	}
+	if _, err := time.Parse("15:04", set.SendTime); err != nil {
+		set.SendTime = "09:00"
+	}
+	if set.Frequency == "weekly" {
+		if _, err := parseWeekdayName(set.WeeklyDay); err != nil {
+			return fmt.Errorf("invalid weeklyDay %q", set.WeeklyDay)
+		}
+	}
+	if set.Frequency == "monthly" {
+		if set.MonthlyDay < 1 || set.MonthlyDay > 28 {
+			return fmt.Errorf("monthlyDay must be 1-28")
+		}
+	}
+	switch set.FileFormat {
+	case "":
+		set.FileFormat = "xlsx"
+	case "xlsx", "csv":
+	default:
+		return fmt.Errorf("invalid fileFormat %q", set.FileFormat)
+	}
+	// Normalise the report's own delivery channels: drop empty entries and
+	// assign an id when the client created one without one.
+	if set.Channels != nil {
+		clean := make([]models.ReportChannel, 0, len(set.Channels))
+		for i, c := range set.Channels {
+			if strings.TrimSpace(c.Type) == "" {
+				continue
+			}
+			if c.ID == "" {
+				c.ID = fmt.Sprintf("rc-%d", time.Now().UnixNano()+int64(i))
+			}
+			if len(c.Config) == 0 {
+				c.Config = json.RawMessage("{}")
+			}
+			clean = append(clean, c)
+		}
+		set.Channels = clean
+	}
+	return nil
+}
+
+var weekdayNames = []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
+
+func parseWeekdayName(s string) (time.Weekday, error) {
+	for i, n := range weekdayNames {
+		if strings.EqualFold(s, n) {
+			return time.Weekday(i), nil
+		}
+	}
+	return 0, fmt.Errorf("unknown weekday")
+}
+
+// handleGetReportSettings returns the periodic report configuration.
+func (s *Server) handleGetReportSettings(w http.ResponseWriter, r *http.Request) {
+	set, err := s.Store.GetReportSettings(r.Context())
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+	if set.NotificationIDs == nil {
+		set.NotificationIDs = []string{}
+	}
+	if set.Channels == nil {
+		set.Channels = []models.ReportChannel{}
+	}
+	// A never-configured report defaults to delivering the Excel file so the
+	// out-of-the-box behaviour matches the requested file delivery.
+	if set.Frequency == "" {
+		set.SendFile = true
+		set.FileFormat = "xlsx"
+	}
+	// Never expose the Slack bot token in plaintext (mirrors the AI key).
+	set.SlackBotToken = maskKey(set.SlackBotToken)
+	writeJSON(w, http.StatusOK, set)
+}
+
+// handleSaveReportSettings persists the periodic report configuration. The
+// scheduler-owned LastSentAt is preserved across edits.
+func (s *Server) handleSaveReportSettings(w http.ResponseWriter, r *http.Request) {
+	var req models.ReportSettings
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if err := normalizeReportSettings(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	existing, err := s.Store.GetReportSettings(r.Context())
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+	req.LastSentAt = existing.LastSentAt
+	// The UI only ever sees a masked token; an empty or unchanged-mask value
+	// means "keep the stored one" (same convention as the AI settings).
+	if strings.TrimSpace(req.SlackBotToken) == "" || strings.Contains(req.SlackBotToken, "••••") {
+		req.SlackBotToken = existing.SlackBotToken
+	}
+	if err := s.Store.SaveReportSettings(r.Context(), req); err != nil {
+		httpError(w, err)
+		return
+	}
+	req.SlackBotToken = maskKey(req.SlackBotToken)
+	writeJSON(w, http.StatusOK, req)
+}
+
+// handleSendReportNow builds a report for the last 24h and dispatches it to
+// the configured channels immediately ("send test now" button).
+func (s *Server) handleSendReportNow(w http.ResponseWriter, r *http.Request) {
+	if s.Reports == nil {
+		http.Error(w, "report scheduler unavailable", http.StatusInternalServerError)
+		return
+	}
+	res, err := s.Reports.SendNow(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "subject": res.Subject, "body": res.Body})
 }
 
 // handlePublicSettings exposes only the branding fields to unauthenticated
@@ -397,7 +738,7 @@ func (s *Server) handleCreateMonitor(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if m.IntervalSec <= 0 || m.TimeoutSec <= 0 {
+	if m.IntervalSec <= 0 || m.TimeoutSec <= 0 || m.SloTargetPct <= 0 {
 		// Fill unset fields from the server-wide defaults (Settings → Umum).
 		sys, err := s.Store.GetSystemSettings(r.Context())
 		if err == nil {
@@ -406,6 +747,9 @@ func (s *Server) handleCreateMonitor(w http.ResponseWriter, r *http.Request) {
 			}
 			if m.TimeoutSec <= 0 {
 				m.TimeoutSec = sys.DefaultTimeoutSec
+			}
+			if m.SloTargetPct <= 0 {
+				m.SloTargetPct = sys.DefaultSloTargetPct
 			}
 		} else {
 			if m.IntervalSec <= 0 {
@@ -598,6 +942,25 @@ func (s *Server) handleMonitorDomainSSL(w http.ResponseWriter, r *http.Request) 
 	ssl := domainssl.CheckSSL(r.Context(), host, port, timeout)
 	resp["ssl"] = ssl
 
+	// Public IP the host currently resolves to (display-only). Bare-IP hosts
+	// report themselves; domains go through sysdns (resolv.conf-aware + DoH
+	// fallback), preferring an IPv4 answer.
+	publicIP := ""
+	if ip := net.ParseIP(host); ip != nil {
+		publicIP = host
+	} else if addrs, derr := sysdns.LookupHost(r.Context(), host); derr == nil {
+		for _, a := range addrs {
+			if net.ParseIP(a).To4() != nil {
+				publicIP = a
+				break
+			}
+		}
+		if publicIP == "" && len(addrs) > 0 {
+			publicIP = addrs[0]
+		}
+	}
+	resp["publicIp"] = publicIP
+
 	// WHOIS only makes sense for a real domain (skip bare IPs).
 	if ip := net.ParseIP(host); ip == nil {
 		domain := domainssl.RegistrableDomain(host)
@@ -676,7 +1039,7 @@ func (s *Server) handleAnalyzeMonitor(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Not configured → 404-style guidance; upstream failure → 502.
 		if strings.Contains(err.Error(), "not configured") {
-			http.Error(w, "AI analysis is not configured — set UPTIME_LLM_API_KEY on the server", http.StatusBadRequest)
+			http.Error(w, "AI analysis is not configured \u2014 open Settings \u2192 AI to choose a provider and paste an API key", http.StatusBadRequest)
 			return
 		}
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -810,6 +1173,61 @@ func (s *Server) handleTestNotification(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+}
+
+// handleTestNotificationPreview sends a test alert through an unsaved
+// notification definition so the user can verify credentials before saving.
+// The payload is the same shape as a stored notification; nothing is
+// persisted here.
+func (s *Server) handleTestNotificationPreview(w http.ResponseWriter, r *http.Request) {
+	var n models.Notification
+	if err := json.NewDecoder(r.Body).Decode(&n); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(n.Type) == "" {
+		http.Error(w, "notification type is required", http.StatusBadRequest)
+		return
+	}
+	if err := s.Notifier.TestSend(r.Context(), &n); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+}
+
+// ---------- alert templates ----------
+
+// handleListTemplates returns the reusable notification message templates
+// (email + chat), seeding built-in defaults when none have been saved yet.
+func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
+	list, err := s.Store.GetAlertTemplates(r.Context())
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+// handleSaveTemplates replaces the whole template library. IDs are assigned and
+// exactly one default per channel is enforced inside the store.
+func (s *Server) handleSaveTemplates(w http.ResponseWriter, r *http.Request) {
+	var list []models.AlertTemplate
+	if err := json.NewDecoder(r.Body).Decode(&list); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.Store.SaveAlertTemplates(r.Context(), list); err != nil {
+		httpError(w, err)
+		return
+	}
+	// Re-read so the client sees normalised IDs / default flags.
+	saved, err := s.Store.GetAlertTemplates(r.Context())
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, saved)
 }
 
 // ---------- escalations ----------

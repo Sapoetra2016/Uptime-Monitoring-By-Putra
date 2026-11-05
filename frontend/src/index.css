@@ -21,7 +21,13 @@
 }
 
 body {
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
 }
 
 @keyframes toastIn {
@@ -33,4 +39,1282 @@ body {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+}
+
+/* ----------------------------------------------------------------------
+   Metro theme — enabled from Settings → Appearance. lib/theme.ts sets
+   data-theme="metro" on <html>; these global overrides restyle every page
+   at once (flat square tiles, Segoe UI Light headings, vivid Metro colors)
+   without touching individual components.
+   ---------------------------------------------------------------------- */
+html[data-theme="metro"] body {
+  background-color: #101010 !important;
+  font-family: "Segoe UI", "Segoe UI Variable Text", system-ui, sans-serif;
+  letter-spacing: 0.2px;
+}
+html[data-theme="metro"] *,
+html[data-theme="metro"] *::before,
+html[data-theme="metro"] *::after {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+/* The Segoe UI "Light" display look. */
+html[data-theme="metro"] h1 {
+  font-weight: 300;
+  color: #ffffff;
+}
+html[data-theme="metro"] h2 {
+  font-weight: 300;
+  color: #f5f5f5;
+}
+/* Flat charcoal surfaces replace the navy panels. */
+html[data-theme="metro"] .bg-app-panel {
+  background-color: #1b1b1b !important;
+}
+html[data-theme="metro"] .bg-slate-900,
+html[data-theme="metro"] .bg-slate-900\/40 {
+  background-color: #161616 !important;
+}
+html[data-theme="metro"] .bg-slate-800,
+html[data-theme="metro"] .bg-slate-800\/50,
+html[data-theme="metro"] .bg-slate-700 {
+  background-color: #242424 !important;
+}
+html[data-theme="metro"] .hover\:bg-slate-800:hover,
+html[data-theme="metro"] .hover\:bg-slate-800\/50:hover,
+html[data-theme="metro"] .hover\:bg-slate-700:hover {
+  background-color: #2f2f2f !important;
+}
+html[data-theme="metro"] .border-slate-800,
+html[data-theme="metro"] .border-slate-800\/60 {
+  border-color: #2e2e2e !important;
+}
+html[data-theme="metro"] .border-slate-700,
+html[data-theme="metro"] .border-slate-600 {
+  border-color: #3a3a3a !important;
+}
+/* Neutral Metro greys for body text. */
+html[data-theme="metro"] .text-slate-100,
+html[data-theme="metro"] .text-slate-200 {
+  color: #f5f5f5 !important;
+}
+html[data-theme="metro"] .text-slate-300 {
+  color: #d0d0d0 !important;
+}
+html[data-theme="metro"] .text-slate-400 {
+  color: #a0a0a0 !important;
+}
+html[data-theme="metro"] .text-slate-500 {
+  color: #828282 !important;
+}
+html[data-theme="metro"] .text-slate-600 {
+  color: #6b6b6b !important;
+}
+/* Sky/cyan highlights → Metro blue. */
+html[data-theme="metro"] .text-sky-300,
+html[data-theme="metro"] .text-sky-400 {
+  color: #4fb1f7 !important;
+}
+html[data-theme="metro"] .bg-sky-500,
+html[data-theme="metro"] .bg-sky-500\/5,
+html[data-theme="metro"] .bg-sky-500\/15,
+html[data-theme="metro"] .bg-sky-500\/20,
+html[data-theme="metro"] .bg-sky-400\/40 {
+  background-color: #0078d7 !important;
+}
+html[data-theme="metro"] .ring-sky-500\/40 {
+  --tw-ring-color: #0078d7 !important;
+}
+html[data-theme="metro"] .border-sky-500 {
+  border-color: #0078d7 !important;
+}
+/* Status palette → classic Metro colors. */
+html[data-theme="metro"] .bg-app-up,
+html[data-theme="metro"] .bg-app-up\/80,
+html[data-theme="metro"] .hover\:bg-app-up:hover {
+  background-color: #60a917 !important;
+}
+html[data-theme="metro"] .text-app-up,
+html[data-theme="metro"] .text-green-300,
+html[data-theme="metro"] .text-green-400 {
+  color: #7ed321 !important;
+}
+html[data-theme="metro"] .bg-app-down,
+html[data-theme="metro"] .bg-app-down\/40 {
+  background-color: #e51400 !important;
+}
+html[data-theme="metro"] .bg-app-down\/20 {
+  background-color: rgba(229, 20, 0, 0.25) !important;
+}
+html[data-theme="metro"] .text-app-down,
+html[data-theme="metro"] .text-red-300,
+html[data-theme="metro"] .text-red-400 {
+  color: #ff4444 !important;
+}
+html[data-theme="metro"] .text-amber-400 {
+  color: #f09609 !important;
+}
+/* Buttons: solid flat tiles, uppercase labels. */
+html[data-theme="metro"] .btn-primary {
+  background-color: #0078d7 !important;
+  color: #fff !important;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+html[data-theme="metro"] .btn-primary:hover {
+  background-color: #0090f1 !important;
+}
+html[data-theme="metro"] .btn-secondary {
+  background-color: #2b2b2b !important;
+  color: #f0f0f0 !important;
+  border: 1px solid #3f3f3f !important;
+  text-transform: uppercase;
+}
+html[data-theme="metro"] .btn-secondary:hover {
+  background-color: #383838 !important;
+}
+html[data-theme="metro"] .btn-danger {
+  background-color: #e51400 !important;
+  color: #fff !important;
+  text-transform: uppercase;
+}
+html[data-theme="metro"] .btn-danger:hover {
+  background-color: #ff1d0f !important;
+}
+/* Inputs: flat black fields with a hairline border. */
+html[data-theme="metro"] .input {
+  background-color: #171717 !important;
+  border: 1px solid #3a3a3a !important;
+}
+html[data-theme="metro"] .input:focus {
+  border-color: #0078d7 !important;
+}
+/* Top nav becomes a black bar with a Metro-blue accent edge. */
+html[data-theme="metro"] nav.bg-app-panel {
+  background-color: #000 !important;
+  border-bottom: 2px solid #0078d7 !important;
+}
+/* Remaining color utilities so no element keeps a default-theme hue. */
+html[data-theme="metro"] .bg-slate-600,
+html[data-theme="metro"] .bg-slate-800\/40,
+html[data-theme="metro"] .bg-slate-800\/70,
+html[data-theme="metro"] .bg-slate-900\/60 {
+  background-color: #242424 !important;
+}
+html[data-theme="metro"] .border-slate-500 {
+  border-color: #4a4a4a !important;
+}
+html[data-theme="metro"] .border-sky-500\/60,
+html[data-theme="metro"] .border-green-500\/50,
+html[data-theme="metro"] .border-red-500\/50 {
+  border-color: #0078d7 !important;
+}
+html[data-theme="metro"] .border-green-500\/50 {
+  border-color: #60a917 !important;
+}
+html[data-theme="metro"] .border-red-500\/50 {
+  border-color: #e51400 !important;
+}
+html[data-theme="metro"] .bg-sky-400 {
+  background-color: #0078d7 !important;
+}
+html[data-theme="metro"] .bg-amber-400 {
+  background-color: #f09609 !important;
+}
+html[data-theme="metro"] .bg-amber-500\/15 {
+  background-color: #3a2c14 !important;
+}
+html[data-theme="metro"] .bg-green-500\/15 {
+  background-color: #1e3a14 !important;
+}
+html[data-theme="metro"] .bg-red-500\/15 {
+  background-color: #3a1414 !important;
+}
+/* Charts follow the theme too (CSS beats SVG presentation attributes). */
+html[data-theme="metro"] .recharts-cartesian-axis-tick-value {
+  fill: #a0a0a0 !important;
+}
+html[data-theme="metro"] .recharts-cartesian-grid line {
+  stroke: #2e2e2e !important;
+}
+html[data-theme="metro"] .recharts-cartesian-axis-line {
+  stroke: #3a3a3a !important;
+}
+html[data-theme="metro"] .recharts-tooltip-wrapper > div {
+  background: #1b1b1b !important;
+  border: 1px solid #3a3a3a !important;
+  border-radius: 0 !important;
+  color: #f5f5f5 !important;
+}
+html[data-theme="metro"] .recharts-tooltip-label {
+  color: #ffffff !important;
+}
+
+/* ----------------------------------------------------------------------
+   Material 3 theme — Google's "Material You" expressive design: tonal
+   dark surfaces, large 16px card corners, pill buttons, purple primary.
+   ---------------------------------------------------------------------- */
+html[data-theme="material"] body {
+  background-color: #141218 !important;
+  font-family:
+    "Roboto",
+    "Google Sans",
+    system-ui,
+    -apple-system,
+    sans-serif;
+  letter-spacing: 0.1px;
+}
+/* Cards: tonal surfaces with M3 level-1 elevation instead of borders. */
+html[data-theme="material"] .rounded-lg {
+  border-radius: 16px !important;
+}
+html[data-theme="material"] .rounded-md {
+  border-radius: 12px !important;
+}
+html[data-theme="material"] .bg-app-panel {
+  background-color: #1e1b23 !important;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 1px 3px 1px rgba(0, 0, 0, 0.15) !important;
+}
+html[data-theme="material"] .border-slate-800,
+html[data-theme="material"] .border-slate-800\/60 {
+  border-color: #302a3a !important;
+}
+html[data-theme="material"] .border-slate-700,
+html[data-theme="material"] .border-slate-600 {
+  border-color: #49454f !important;
+}
+html[data-theme="material"] .bg-slate-900,
+html[data-theme="material"] .bg-slate-900\/40 {
+  background-color: #17151c !important;
+}
+html[data-theme="material"] .bg-slate-800,
+html[data-theme="material"] .bg-slate-700 {
+  background-color: #2b2733 !important;
+}
+html[data-theme="material"] .hover\:bg-slate-800:hover,
+html[data-theme="material"] .hover\:bg-slate-800\/50:hover,
+html[data-theme="material"] .hover\:bg-slate-700:hover {
+  background-color: #37313f !important;
+}
+/* M3 on-surface text tones. */
+html[data-theme="material"] .text-slate-100,
+html[data-theme="material"] .text-slate-200 {
+  color: #e6e1e5 !important;
+}
+html[data-theme="material"] .text-slate-300 {
+  color: #cac4d0 !important;
+}
+html[data-theme="material"] .text-slate-400 {
+  color: #a99fba !important;
+}
+html[data-theme="material"] .text-slate-500 {
+  color: #948b9f !important;
+}
+html[data-theme="material"] .text-slate-600 {
+  color: #7a7482 !important;
+}
+/* Sky accents → M3 primary purple. */
+html[data-theme="material"] .text-sky-300,
+html[data-theme="material"] .text-sky-400 {
+  color: #d0bcff !important;
+}
+html[data-theme="material"] .bg-sky-500,
+html[data-theme="material"] .bg-sky-500\/5,
+html[data-theme="material"] .bg-sky-500\/15,
+html[data-theme="material"] .bg-sky-500\/20 {
+  background-color: #4a3f6b !important;
+}
+html[data-theme="material"] .bg-sky-400\/40 {
+  background-color: #655580 !important;
+}
+html[data-theme="material"] .ring-sky-500\/40 {
+  --tw-ring-color: #d0bcff !important;
+}
+html[data-theme="material"] .border-sky-500 {
+  border-color: #d0bcff !important;
+}
+/* Status → M3 muted-green / muted-red scheme colors. */
+html[data-theme="material"] .bg-app-up,
+html[data-theme="material"] .bg-app-up\/80,
+html[data-theme="material"] .hover\:bg-app-up:hover {
+  background-color: #4cb05d !important;
+}
+html[data-theme="material"] .text-app-up,
+html[data-theme="material"] .text-green-300,
+html[data-theme="material"] .text-green-400 {
+  color: #81c995 !important;
+}
+html[data-theme="material"] .bg-app-down,
+html[data-theme="material"] .bg-app-down\/40 {
+  background-color: #d34f57 !important;
+}
+html[data-theme="material"] .bg-app-down\/20 {
+  background-color: #5c2b31 !important;
+}
+html[data-theme="material"] .text-app-down,
+html[data-theme="material"] .text-red-300,
+html[data-theme="material"] .text-red-400 {
+  color: #f2b8b5 !important;
+}
+html[data-theme="material"] .text-amber-400 {
+  color: #f0c987 !important;
+}
+/* Buttons: M3 pill-shaped, sentence case, elevation on primary. */
+html[data-theme="material"] .btn-primary,
+html[data-theme="material"] .btn-secondary,
+html[data-theme="material"] .btn-danger {
+  border-radius: 999px !important;
+  text-transform: none !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.3px;
+}
+html[data-theme="material"] .btn-primary {
+  background-color: #d0bcff !important;
+  color: #381e72 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4) !important;
+}
+html[data-theme="material"] .btn-primary:hover {
+  background-color: #dccdff !important;
+}
+html[data-theme="material"] .btn-secondary {
+  background-color: #4a4458 !important;
+  color: #e6e0e9 !important;
+}
+html[data-theme="material"] .btn-secondary:hover {
+  background-color: #565064 !important;
+}
+html[data-theme="material"] .btn-danger {
+  background-color: #683232 !important;
+  color: #f2b8b5 !important;
+}
+html[data-theme="material"] .btn-danger:hover {
+  background-color: #7a3a3a !important;
+}
+/* Inputs: M3 filled fields. */
+html[data-theme="material"] .input {
+  background-color: #2b2930 !important;
+  border: 1px solid transparent !important;
+  border-bottom: 1px solid #948b9f !important;
+  border-radius: 8px 8px 0 0 !important;
+}
+html[data-theme="material"] .input:focus {
+  border-color: #d0bcff !important;
+  background-color: #333038 !important;
+}
+/* Headlines: Roboto regular weight, M3 style. */
+html[data-theme="material"] h1,
+html[data-theme="material"] h2 {
+  font-weight: 400;
+  color: #e6e1e5;
+}
+/* Top app bar: flat tonal surface. */
+html[data-theme="material"] nav.bg-app-panel {
+  background-color: #1d1b1f !important;
+  border-bottom: 1px solid #302a3a !important;
+  box-shadow: none !important;
+}
+html[data-theme="material"] input[type="checkbox"] {
+  accent-color: #d0bcff;
+}
+/* Remaining color utilities so no element keeps a default-theme hue. */
+html[data-theme="material"] .bg-slate-600,
+html[data-theme="material"] .bg-slate-800\/40,
+html[data-theme="material"] .bg-slate-800\/70,
+html[data-theme="material"] .bg-slate-900\/60 {
+  background-color: #2b2733 !important;
+}
+html[data-theme="material"] .border-slate-500 {
+  border-color: #5a5262 !important;
+}
+html[data-theme="material"] .border-sky-500\/60 {
+  border-color: #d0bcff !important;
+}
+html[data-theme="material"] .border-green-500\/50 {
+  border-color: #81c995 !important;
+}
+html[data-theme="material"] .border-red-500\/50 {
+  border-color: #f2b8b5 !important;
+}
+html[data-theme="material"] .bg-sky-400 {
+  background-color: #6f5f8f !important;
+}
+html[data-theme="material"] .bg-amber-400 {
+  background-color: #f0b25c !important;
+}
+html[data-theme="material"] .bg-amber-500\/15 {
+  background-color: #4a3c26 !important;
+}
+html[data-theme="material"] .bg-green-500\/15 {
+  background-color: #22392b !important;
+}
+html[data-theme="material"] .bg-red-500\/15 {
+  background-color: #43262a !important;
+}
+/* Charts follow the theme too. */
+html[data-theme="material"] .recharts-cartesian-axis-tick-value {
+  fill: #9c92a5 !important;
+}
+html[data-theme="material"] .recharts-cartesian-grid line {
+  stroke: #302a3a !important;
+}
+html[data-theme="material"] .recharts-cartesian-axis-line {
+  stroke: #49454f !important;
+}
+html[data-theme="material"] .recharts-tooltip-wrapper > div {
+  background: #2b2733 !important;
+  border: 1px solid #49454f !important;
+  border-radius: 12px !important;
+  color: #e6e1e5 !important;
+}
+html[data-theme="material"] .recharts-tooltip-label {
+  color: #ffffff !important;
+}
+
+/* ----------------------------------------------------------------------
+   iOS theme — Apple dark mode: black canvas, elevated dark cards,
+   system-blue accents, translucent blurred nav bar, SF-style fonts.
+   ---------------------------------------------------------------------- */
+html[data-theme="ios"] body {
+  background-color: #000000 !important;
+  color: #f5f5f7 !important;
+  font-family:
+    -apple-system, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto,
+    sans-serif;
+}
+html[data-theme="ios"] .rounded-lg {
+  border-radius: 14px !important;
+}
+html[data-theme="ios"] .rounded-md {
+  border-radius: 10px !important;
+}
+/* Elevated dark cards on the black canvas (iOS grouped-list style). */
+html[data-theme="ios"] .bg-app-panel {
+  background-color: #1c1c1e !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5) !important;
+}
+html[data-theme="ios"] .border-slate-800,
+html[data-theme="ios"] .border-slate-800\/60 {
+  border-color: #2c2c2e !important;
+}
+html[data-theme="ios"] .border-slate-700,
+html[data-theme="ios"] .border-slate-600 {
+  border-color: #3a3a3c !important;
+}
+html[data-theme="ios"] .bg-slate-900,
+html[data-theme="ios"] .bg-slate-900\/40 {
+  background-color: #161617 !important;
+}
+html[data-theme="ios"] .bg-slate-800,
+html[data-theme="ios"] .bg-slate-700 {
+  background-color: #2c2c2e !important;
+}
+html[data-theme="ios"] .hover\:bg-slate-800:hover,
+html[data-theme="ios"] .hover\:bg-slate-800\/50:hover,
+html[data-theme="ios"] .hover\:bg-slate-700:hover {
+  background-color: #3a3a3c !important;
+}
+/* Selected segment pills: raised grey tile on a dark track. */
+html[data-theme="ios"] .bg-slate-800.text-white,
+html[data-theme="ios"] .bg-slate-700.text-white {
+  background-color: #48484a !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4) !important;
+}
+/* iOS label colors (dark mode). */
+html[data-theme="ios"] .text-white {
+  color: #ffffff !important;
+}
+html[data-theme="ios"] .hover\:text-white:hover {
+  color: #ffffff !important;
+}
+html[data-theme="ios"] .text-slate-100,
+html[data-theme="ios"] .text-slate-200 {
+  color: #f5f5f7 !important;
+}
+html[data-theme="ios"] .text-slate-300 {
+  color: #d1d1d6 !important;
+}
+html[data-theme="ios"] .text-slate-400 {
+  color: #aeaeb2 !important;
+}
+html[data-theme="ios"] .text-slate-500 {
+  color: #8e8e93 !important;
+}
+html[data-theme="ios"] .text-slate-600 {
+  color: #636366 !important;
+}
+/* Sky accents → iOS dark-mode system blue. */
+html[data-theme="ios"] .text-sky-300,
+html[data-theme="ios"] .text-sky-400 {
+  color: #409cff !important;
+}
+html[data-theme="ios"] .bg-sky-500,
+html[data-theme="ios"] .bg-sky-500\/5,
+html[data-theme="ios"] .bg-sky-500\/15,
+html[data-theme="ios"] .bg-sky-500\/20 {
+  background-color: #0b2e4f !important;
+}
+html[data-theme="ios"] .bg-sky-400\/40 {
+  background-color: #0a84ff !important;
+}
+html[data-theme="ios"] .ring-sky-500\/40 {
+  --tw-ring-color: #0a84ff !important;
+}
+html[data-theme="ios"] .border-sky-500 {
+  border-color: #0a84ff !important;
+}
+/* Status → iOS system colors. */
+html[data-theme="ios"] .bg-app-up,
+html[data-theme="ios"] .bg-app-up\/80,
+html[data-theme="ios"] .hover\:bg-app-up:hover {
+  background-color: #30d158 !important;
+}
+html[data-theme="ios"] .text-app-up,
+html[data-theme="ios"] .text-green-300,
+html[data-theme="ios"] .text-green-400 {
+  color: #30d158 !important;
+}
+html[data-theme="ios"] .bg-app-down,
+html[data-theme="ios"] .bg-app-down\/40 {
+  background-color: #ff453a !important;
+}
+html[data-theme="ios"] .bg-app-down\/20 {
+  background-color: #3a1a19 !important;
+}
+html[data-theme="ios"] .text-app-down,
+html[data-theme="ios"] .text-red-300,
+html[data-theme="ios"] .text-red-400 {
+  color: #ff6961 !important;
+}
+html[data-theme="ios"] .text-amber-400 {
+  color: #ffd60a !important;
+}
+/* Buttons: iOS pill, semibold, system fills. */
+html[data-theme="ios"] .btn-primary,
+html[data-theme="ios"] .btn-secondary,
+html[data-theme="ios"] .btn-danger {
+  border-radius: 999px !important;
+  text-transform: none !important;
+  font-weight: 600 !important;
+}
+html[data-theme="ios"] .btn-primary {
+  background-color: #0a84ff !important;
+  color: #ffffff !important;
+}
+html[data-theme="ios"] .btn-primary:hover {
+  background-color: #409cff !important;
+}
+html[data-theme="ios"] .btn-secondary {
+  background-color: #2c2c2e !important;
+  color: #f5f5f7 !important;
+}
+html[data-theme="ios"] .btn-secondary:hover {
+  background-color: #3a3a3c !important;
+}
+html[data-theme="ios"] .btn-danger {
+  background-color: #ff453a !important;
+  color: #ffffff !important;
+}
+html[data-theme="ios"] .btn-danger:hover {
+  background-color: #ff6961 !important;
+}
+/* Inputs: dark fields with a soft grey outline. */
+html[data-theme="ios"] .input {
+  background-color: #161617 !important;
+  border: 1px solid #3a3a3c !important;
+  border-radius: 10px !important;
+}
+html[data-theme="ios"] .input:focus {
+  border-color: #0a84ff !important;
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.35) !important;
+}
+/* Headings: SF Pro bold display, iOS large-title style. */
+html[data-theme="ios"] h1 {
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: #ffffff;
+}
+html[data-theme="ios"] h2 {
+  font-weight: 600;
+  color: #f5f5f7;
+}
+/* Nav bar: translucent blurred glass with a hairline separator. */
+html[data-theme="ios"] nav.bg-app-panel {
+  background-color: rgba(22, 22, 24, 0.75) !important;
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid #38383a !important;
+}
+html[data-theme="ios"] input[type="checkbox"] {
+  accent-color: #30d158;
+}
+/* Remaining color utilities so no element keeps a default-theme hue. */
+html[data-theme="ios"] .bg-slate-600 {
+  background-color: #48484a !important;
+}
+html[data-theme="ios"] .bg-slate-800\/40,
+html[data-theme="ios"] .bg-slate-800\/70 {
+  background-color: #2c2c2e !important;
+}
+html[data-theme="ios"] .bg-slate-900\/60 {
+  background-color: #161617 !important;
+}
+html[data-theme="ios"] .border-slate-500 {
+  border-color: #545456 !important;
+}
+html[data-theme="ios"] .border-sky-500\/60 {
+  border-color: #0a84ff !important;
+}
+html[data-theme="ios"] .border-green-500\/50 {
+  border-color: #30d158 !important;
+}
+html[data-theme="ios"] .border-red-500\/50 {
+  border-color: #ff453a !important;
+}
+html[data-theme="ios"] .bg-sky-400 {
+  background-color: #0a84ff !important;
+}
+html[data-theme="ios"] .bg-amber-400 {
+  background-color: #ffd60a !important;
+}
+html[data-theme="ios"] .bg-amber-500\/15 {
+  background-color: #3a3211 !important;
+}
+html[data-theme="ios"] .bg-green-500\/15 {
+  background-color: #12331a !important;
+}
+html[data-theme="ios"] .bg-red-500\/15 {
+  background-color: #3a1a19 !important;
+}
+/* Charts follow the theme too. */
+html[data-theme="ios"] .recharts-cartesian-axis-tick-value {
+  fill: #8e8e93 !important;
+}
+html[data-theme="ios"] .recharts-cartesian-grid line {
+  stroke: #2c2c2e !important;
+}
+html[data-theme="ios"] .recharts-cartesian-axis-line {
+  stroke: #3a3a3c !important;
+}
+html[data-theme="ios"] .recharts-tooltip-wrapper > div {
+  background: rgba(28, 28, 30, 0.95) !important;
+  border: 1px solid #38383a !important;
+  border-radius: 10px !important;
+  color: #f5f5f7 !important;
+}
+html[data-theme="ios"] .recharts-tooltip-label {
+  color: #ffffff !important;
+}
+/* Nav creates a stacking context (backdrop-filter); lift it above page
+   content so the profile dropdown never falls behind the cards. */
+html[data-theme="ios"] nav.bg-app-panel {
+  position: relative;
+  z-index: 70;
+}
+
+/* ----------------------------------------------------------------------
+   Aero Glass theme — Windows 7 look: luminous blue desktop gradient,
+   translucent "glass" cards with inner sheen, glossy gradient buttons,
+   taskbar-style nav bar, Segoe UI everywhere.
+   ---------------------------------------------------------------------- */
+html[data-theme="aero"] body {
+  background: linear-gradient(
+    180deg,
+    #d9ebf8 0%,
+    #aecfef 40%,
+    #7faddd 72%,
+    #5c93c8 100%
+  ) !important;
+  background-attachment: fixed !important;
+  color: #12324a !important;
+  font-family: "Segoe UI", Tahoma, system-ui, sans-serif;
+}
+/* Glass cards get softly rounded corners like Aero windows. */
+html[data-theme="aero"] .rounded-lg {
+  border-radius: 6px !important;
+}
+html[data-theme="aero"] .rounded-md {
+  border-radius: 4px !important;
+}
+html[data-theme="aero"] .bg-app-panel {
+  background-color: rgba(255, 255, 255, 0.88) !important;
+  background-image: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.96) 0%,
+    rgba(238, 247, 253, 0.9) 45%,
+    rgba(222, 237, 248, 0.88) 100%
+  ) !important;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid #7fa6c9 !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 2px 12px rgba(25, 60, 95, 0.28) !important;
+}
+/* Blue-tinted text scale (content sits on bright glass). */
+html[data-theme="aero"] .text-slate-100,
+html[data-theme="aero"] .text-slate-200 {
+  color: #0e2a40 !important;
+}
+html[data-theme="aero"] .text-slate-300 {
+  color: #274b66 !important;
+}
+html[data-theme="aero"] .text-slate-400 {
+  color: #3f6484 !important;
+}
+html[data-theme="aero"] .text-slate-500 {
+  color: #5d7f9b !important;
+}
+html[data-theme="aero"] .text-slate-600 {
+  color: #7b99b2 !important;
+}
+html[data-theme="aero"] .text-white {
+  color: #0f2e46 !important;
+}
+html[data-theme="aero"] .hover\:text-white:hover {
+  color: #06233a !important;
+}
+/* Chip / segment fills → pale glass blues. */
+html[data-theme="aero"] .bg-slate-900,
+html[data-theme="aero"] .bg-slate-900\/40 {
+  background-color: #ffffff !important;
+}
+html[data-theme="aero"] .bg-slate-800,
+html[data-theme="aero"] .bg-slate-800\/50 {
+  background-color: #dce9f4 !important;
+}
+html[data-theme="aero"] .bg-slate-700 {
+  background-color: #c9dded !important;
+}
+html[data-theme="aero"] .hover\:bg-slate-800:hover,
+html[data-theme="aero"] .hover\:bg-slate-800\/50:hover,
+html[data-theme="aero"] .hover\:bg-slate-700:hover {
+  background-color: #c3dcf0 !important;
+}
+html[data-theme="aero"] .border-slate-800,
+html[data-theme="aero"] .border-slate-800\/60 {
+  border-color: #b4cde1 !important;
+}
+html[data-theme="aero"] .border-slate-700,
+html[data-theme="aero"] .border-slate-600 {
+  border-color: #93b4cf !important;
+}
+/* Sky accents → Aero highlight blue. */
+html[data-theme="aero"] .text-sky-300,
+html[data-theme="aero"] .text-sky-400 {
+  color: #1f6f9e !important;
+}
+html[data-theme="aero"] .bg-sky-500,
+html[data-theme="aero"] .bg-sky-500\/5,
+html[data-theme="aero"] .bg-sky-500\/15,
+html[data-theme="aero"] .bg-sky-500\/20 {
+  background-color: #cde6f7 !important;
+}
+html[data-theme="aero"] .bg-sky-400\/40 {
+  background-color: #3d90cf !important;
+}
+html[data-theme="aero"] .ring-sky-500\/40 {
+  --tw-ring-color: #3d90cf !important;
+}
+html[data-theme="aero"] .border-sky-500 {
+  border-color: #2f7fbf !important;
+}
+/* Status → vivid Aero greens/reds. */
+html[data-theme="aero"] .bg-app-up,
+html[data-theme="aero"] .bg-app-up\/80,
+html[data-theme="aero"] .hover\:bg-app-up:hover {
+  background-color: #35b244 !important;
+}
+html[data-theme="aero"] .text-app-up,
+html[data-theme="aero"] .text-green-300,
+html[data-theme="aero"] .text-green-400 {
+  color: #1d7a2a !important;
+}
+html[data-theme="aero"] .bg-app-down,
+html[data-theme="aero"] .bg-app-down\/40 {
+  background-color: #e04a3f !important;
+}
+html[data-theme="aero"] .bg-app-down\/20 {
+  background-color: #fbdedb !important;
+}
+html[data-theme="aero"] .text-app-down,
+html[data-theme="aero"] .text-red-300,
+html[data-theme="aero"] .text-red-400 {
+  color: #b62b1f !important;
+}
+html[data-theme="aero"] .text-amber-400 {
+  color: #9a6a00 !important;
+}
+/* Buttons: glossy Aero pills with gradient sheen and colored rim. */
+html[data-theme="aero"] .btn-primary,
+html[data-theme="aero"] .btn-secondary,
+html[data-theme="aero"] .btn-danger {
+  border-radius: 3px !important;
+  text-transform: none !important;
+  font-weight: 600 !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+html[data-theme="aero"] .btn-primary {
+  background: linear-gradient(
+    180deg,
+    #eaf6fd 0%,
+    #d0eefa 45%,
+    #a4dcf7 46%,
+    #c7ecfa 100%
+  ) !important;
+  border: 1px solid #2c6e9e !important;
+  color: #11324b !important;
+  box-shadow: 0 1px 3px rgba(20, 50, 80, 0.3) !important;
+}
+html[data-theme="aero"] .btn-primary:hover {
+  background: linear-gradient(
+    180deg,
+    #f4fbff 0%,
+    #ddf4ff 45%,
+    #b5e6ff 46%,
+    #d8f3ff 100%
+  ) !important;
+  border-color: #1f5d8d !important;
+}
+html[data-theme="aero"] .btn-secondary {
+  background: linear-gradient(
+    180deg,
+    #fcfcfc 0%,
+    #f0f0f0 45%,
+    #e2e2e2 46%,
+    #f5f5f5 100%
+  ) !important;
+  border: 1px solid #7a7a7a !important;
+  color: #1e3a52 !important;
+  box-shadow: 0 1px 2px rgba(20, 50, 80, 0.2) !important;
+}
+html[data-theme="aero"] .btn-secondary:hover {
+  background: linear-gradient(
+    180deg,
+    #ffffff 0%,
+    #f5f9fd 45%,
+    #e3eef8 46%,
+    #f8fbfe 100%
+  ) !important;
+  border-color: #4a7fa5 !important;
+}
+html[data-theme="aero"] .btn-danger {
+  background: linear-gradient(
+    180deg,
+    #fdecec 0%,
+    #f9d4d4 45%,
+    #f3b2b2 46%,
+    #fadcdc 100%
+  ) !important;
+  border: 1px solid #b03030 !important;
+  color: #7a1616 !important;
+}
+html[data-theme="aero"] .btn-danger:hover {
+  background: linear-gradient(
+    180deg,
+    #fff5f5 0%,
+    #fcdfdf 45%,
+    #f7bcbc 46%,
+    #fdeaea 100%
+  ) !important;
+}
+/* Inputs: white fields with the classic W7 blue focus glow. */
+html[data-theme="aero"] .input {
+  background-color: #ffffff !important;
+  border: 1px solid #9bb7cf !important;
+  border-radius: 2px !important;
+  color: #12324a !important;
+}
+html[data-theme="aero"] .input:focus {
+  border-color: #3399ff !important;
+  box-shadow: 0 0 5px rgba(51, 153, 255, 0.75) !important;
+}
+/* Headings: page titles take the theme's ink-blue with a white sheen; card
+   headings stay ink-blue too. */
+html[data-theme="aero"] h1 {
+  font-weight: 600;
+  color: #0d3a5f !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+html[data-theme="aero"] h2 {
+  font-weight: 600;
+  color: #0e2a40;
+}
+/* Nav bar: dark translucent "taskbar" glass with white text. */
+html[data-theme="aero"] nav.bg-app-panel {
+  background: linear-gradient(
+    180deg,
+    rgba(48, 84, 120, 0.92) 0%,
+    rgba(22, 48, 76, 0.95) 100%
+  ) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  backdrop-filter: blur(14px) saturate(1.4);
+  border-bottom: 1px solid #0c2036 !important;
+  box-shadow:
+    inset 0 1px 0 rgba(190, 225, 255, 0.35),
+    0 3px 12px rgba(5, 20, 35, 0.45) !important;
+}
+html[data-theme="aero"] nav .text-white {
+  color: #ffffff !important;
+}
+html[data-theme="aero"] nav .hover\:text-white:hover {
+  color: #ffffff !important;
+}
+html[data-theme="aero"] nav .text-slate-400 {
+  color: #b9d4e8 !important;
+}
+html[data-theme="aero"] nav .border-slate-700 {
+  border-color: #3a628a !important;
+}
+/* Dropdowns living in the nav: solid dark panel (never see-through) so the
+   menu can't visually collide with page content behind it. */
+html[data-theme="aero"] nav .bg-app-panel {
+  background-color: #10233a !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-color: #2e5a7d !important;
+  color: #e8f2fa;
+  box-shadow: 0 6px 20px rgba(4, 15, 28, 0.6) !important;
+}
+html[data-theme="aero"] nav .border-slate-800,
+html[data-theme="aero"] nav .border-slate-800\/60 {
+  border-color: #24455f !important;
+}
+html[data-theme="aero"] nav .text-slate-300 {
+  color: #d5e6f2 !important;
+}
+html[data-theme="aero"] nav .text-slate-500 {
+  color: #9fb8cc !important;
+}
+html[data-theme="aero"] nav .text-red-300 {
+  color: #ff8a80 !important;
+}
+html[data-theme="aero"] nav .hover\:bg-slate-800:hover,
+html[data-theme="aero"] nav .hover\:bg-slate-700:hover {
+  background-color: #1b3a58 !important;
+}
+/* Footer sits on the desktop gradient: light text. */
+html[data-theme="aero"] footer {
+  color: #eaf4fc !important;
+  border-top-color: rgba(255, 255, 255, 0.35) !important;
+}
+html[data-theme="aero"] input[type="checkbox"] {
+  accent-color: #2f7fbf;
+}
+/* Remaining color utilities so no element keeps a default-theme hue. */
+html[data-theme="aero"] .bg-slate-600 {
+  background-color: #a8c3da !important;
+}
+html[data-theme="aero"] .bg-slate-800\/40,
+html[data-theme="aero"] .bg-slate-800\/70 {
+  background-color: #dce9f4 !important;
+}
+html[data-theme="aero"] .bg-slate-900\/60 {
+  background-color: #f2f8fd !important;
+}
+html[data-theme="aero"] .border-slate-500 {
+  border-color: #7fa6c9 !important;
+}
+html[data-theme="aero"] .border-sky-500\/60 {
+  border-color: #2f7fbf !important;
+}
+html[data-theme="aero"] .border-green-500\/50 {
+  border-color: #35b244 !important;
+}
+html[data-theme="aero"] .border-red-500\/50 {
+  border-color: #e04a3f !important;
+}
+html[data-theme="aero"] .bg-sky-400 {
+  background-color: #3d90cf !important;
+}
+html[data-theme="aero"] .bg-amber-400 {
+  background-color: #f5b400 !important;
+}
+html[data-theme="aero"] .bg-amber-500\/15 {
+  background-color: #fdf3d7 !important;
+}
+html[data-theme="aero"] .bg-green-500\/15 {
+  background-color: #ddf2e0 !important;
+}
+html[data-theme="aero"] .bg-red-500\/15 {
+  background-color: #fbe2df !important;
+}
+/* Charts follow the theme too: light glass cards need soft blue ink. */
+html[data-theme="aero"] .recharts-cartesian-axis-tick-value {
+  fill: #3f6484 !important;
+}
+html[data-theme="aero"] .recharts-cartesian-grid line {
+  stroke: #c4d7e8 !important;
+}
+html[data-theme="aero"] .recharts-cartesian-axis-line {
+  stroke: #93b4cf !important;
+}
+html[data-theme="aero"] .recharts-tooltip-wrapper > div {
+  background: rgba(255, 255, 255, 0.96) !important;
+  border: 1px solid #7fa6c9 !important;
+  border-radius: 4px !important;
+  color: #12324a !important;
+  box-shadow: 0 2px 10px rgba(25, 60, 95, 0.3) !important;
+}
+html[data-theme="aero"] .recharts-tooltip-label {
+  color: #0d3a5f !important;
+}
+/* Nav creates a stacking context (backdrop-filter); lift it above page
+   content so the profile dropdown never falls behind the cards. */
+html[data-theme="aero"] nav.bg-app-panel {
+  position: relative;
+  z-index: 70;
+}
+
+/* ----------------------------------------------------------------------
+   macOS theme — Apple "dark vibrancy": graphite desktop gradient, translucent
+   blurred window panels, rounded push buttons, macOS system-blue accent and
+   traffic-light status colors. SF-style fonts.
+   ---------------------------------------------------------------------- */
+html[data-theme="macos"] body {
+  background: linear-gradient(160deg, #242833 0%, #171a22 45%, #0e1015 100%)
+    fixed !important;
+  background-color: #171a22 !important;
+  color: #f2f2f5 !important;
+  font-family:
+    -apple-system, "SF Pro Text", "SF Pro Display", "Helvetica Neue",
+    "Segoe UI", Roboto, sans-serif;
+}
+html[data-theme="macos"] .rounded-lg {
+  border-radius: 12px !important;
+}
+html[data-theme="macos"] .rounded-md {
+  border-radius: 8px !important;
+}
+/* Translucent "vibrancy" window panels with a hairline highlight + shadow. */
+html[data-theme="macos"] .bg-app-panel {
+  background-color: rgba(40, 42, 50, 0.72) !important;
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35) !important;
+}
+html[data-theme="macos"] .border-slate-800,
+html[data-theme="macos"] .border-slate-800\/60 {
+  border-color: #34363f !important;
+}
+html[data-theme="macos"] .border-slate-700,
+html[data-theme="macos"] .border-slate-600 {
+  border-color: #454854 !important;
+}
+html[data-theme="macos"] .bg-slate-900,
+html[data-theme="macos"] .bg-slate-900\/40 {
+  background-color: #1b1d24 !important;
+}
+html[data-theme="macos"] .bg-slate-800,
+html[data-theme="macos"] .bg-slate-700 {
+  background-color: #2a2d36 !important;
+}
+html[data-theme="macos"] .hover\:bg-slate-800:hover,
+html[data-theme="macos"] .hover\:bg-slate-800\/50:hover,
+html[data-theme="macos"] .hover\:bg-slate-700:hover {
+  background-color: #343844 !important;
+}
+/* Selected segment pills: raised graphite tile on a dark track. */
+html[data-theme="macos"] .bg-slate-800.text-white,
+html[data-theme="macos"] .bg-slate-700.text-white {
+  background-color: #3d414c !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4) !important;
+}
+/* Label colors (macOS dark aqua text hierarchy). */
+html[data-theme="macos"] .text-white {
+  color: #ffffff !important;
+}
+html[data-theme="macos"] .hover\:text-white:hover {
+  color: #ffffff !important;
+}
+html[data-theme="macos"] .text-slate-100,
+html[data-theme="macos"] .text-slate-200 {
+  color: #f2f2f5 !important;
+}
+html[data-theme="macos"] .text-slate-300 {
+  color: #d3d4da !important;
+}
+html[data-theme="macos"] .text-slate-400 {
+  color: #a9aab2 !important;
+}
+html[data-theme="macos"] .text-slate-500 {
+  color: #83848d !important;
+}
+html[data-theme="macos"] .text-slate-600 {
+  color: #63646d !important;
+}
+/* Sky accents → macOS system blue. */
+html[data-theme="macos"] .text-sky-300,
+html[data-theme="macos"] .text-sky-400 {
+  color: #4da3ff !important;
+}
+html[data-theme="macos"] .bg-sky-500,
+html[data-theme="macos"] .bg-sky-500\/5,
+html[data-theme="macos"] .bg-sky-500\/15,
+html[data-theme="macos"] .bg-sky-500\/20 {
+  background-color: #17324f !important;
+}
+html[data-theme="macos"] .bg-sky-400\/40 {
+  background-color: #0a84ff !important;
+}
+html[data-theme="macos"] .ring-sky-500\/40 {
+  --tw-ring-color: #0a84ff !important;
+}
+html[data-theme="macos"] .border-sky-500 {
+  border-color: #0a84ff !important;
+}
+/* Status → macOS traffic-light colors. */
+html[data-theme="macos"] .bg-app-up,
+html[data-theme="macos"] .bg-app-up\/80,
+html[data-theme="macos"] .hover\:bg-app-up:hover {
+  background-color: #28c840 !important;
+}
+html[data-theme="macos"] .text-app-up,
+html[data-theme="macos"] .text-green-300,
+html[data-theme="macos"] .text-green-400 {
+  color: #2fd35b !important;
+}
+html[data-theme="macos"] .bg-app-down,
+html[data-theme="macos"] .bg-app-down\/40 {
+  background-color: #ff5f57 !important;
+}
+html[data-theme="macos"] .bg-app-down\/20 {
+  background-color: #3a1e1d !important;
+}
+html[data-theme="macos"] .text-app-down,
+html[data-theme="macos"] .text-red-300,
+html[data-theme="macos"] .text-red-400 {
+  color: #ff6b64 !important;
+}
+html[data-theme="macos"] .text-amber-400 {
+  color: #febc2e !important;
+}
+/* Buttons: macOS push buttons — rounded rectangles, subtle gradient. */
+html[data-theme="macos"] .btn-primary,
+html[data-theme="macos"] .btn-secondary,
+html[data-theme="macos"] .btn-danger {
+  border-radius: 7px !important;
+  text-transform: none !important;
+  font-weight: 500 !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3) !important;
+}
+html[data-theme="macos"] .btn-primary {
+  background: linear-gradient(#3d9bff, #0a84ff) !important;
+  color: #ffffff !important;
+  border-color: #0a6cdd !important;
+}
+html[data-theme="macos"] .btn-primary:hover {
+  background: linear-gradient(#5cb2ff, #1f92ff) !important;
+}
+html[data-theme="macos"] .btn-secondary {
+  background: linear-gradient(#4a4d57, #3a3d46) !important;
+  color: #f2f2f5 !important;
+}
+html[data-theme="macos"] .btn-secondary:hover {
+  background: linear-gradient(#565a64, #464a54) !important;
+}
+html[data-theme="macos"] .btn-danger {
+  background: linear-gradient(#ff7b74, #ff5f57) !important;
+  color: #ffffff !important;
+  border-color: #d94a44 !important;
+}
+html[data-theme="macos"] .btn-danger:hover {
+  background: linear-gradient(#ff8f89, #ff6b64) !important;
+}
+/* Inputs: recessed dark fields with a macOS focus ring. */
+html[data-theme="macos"] .input {
+  background-color: #1b1d24 !important;
+  border: 1px solid #454854 !important;
+  border-radius: 8px !important;
+}
+html[data-theme="macos"] .input:focus {
+  border-color: #0a84ff !important;
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.4) !important;
+}
+/* Headings: SF Pro semibold display. */
+html[data-theme="macos"] h1 {
+  font-weight: 650;
+  letter-spacing: -0.2px;
+  color: #ffffff;
+}
+html[data-theme="macos"] h2 {
+  font-weight: 600;
+  color: #f2f2f5;
+}
+/* Menu bar: translucent blurred vibrancy with a hairline separator. */
+html[data-theme="macos"] nav.bg-app-panel {
+  background-color: rgba(28, 30, 38, 0.7) !important;
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  backdrop-filter: saturate(180%) blur(24px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+html[data-theme="macos"] input[type="checkbox"] {
+  accent-color: #28c840;
+}
+/* Remaining color utilities so no element keeps a default-theme hue. */
+html[data-theme="macos"] .bg-slate-600 {
+  background-color: #4a4d57 !important;
+}
+html[data-theme="macos"] .bg-slate-800\/40,
+html[data-theme="macos"] .bg-slate-800\/70 {
+  background-color: #2a2d36 !important;
+}
+html[data-theme="macos"] .bg-slate-900\/60 {
+  background-color: #1b1d24 !important;
+}
+html[data-theme="macos"] .border-slate-500 {
+  border-color: #5a5d67 !important;
+}
+html[data-theme="macos"] .border-sky-500\/60 {
+  border-color: #0a84ff !important;
+}
+html[data-theme="macos"] .border-green-500\/50 {
+  border-color: #28c840 !important;
+}
+html[data-theme="macos"] .border-red-500\/50 {
+  border-color: #ff5f57 !important;
+}
+html[data-theme="macos"] .bg-sky-400 {
+  background-color: #0a84ff !important;
+}
+html[data-theme="macos"] .bg-amber-400 {
+  background-color: #febc2e !important;
+}
+html[data-theme="macos"] .bg-amber-500\/15 {
+  background-color: #3a3213 !important;
+}
+html[data-theme="macos"] .bg-green-500\/15 {
+  background-color: #123018 !important;
+}
+html[data-theme="macos"] .bg-red-500\/15 {
+  background-color: #3a1e1d !important;
+}
+/* Charts follow the theme too. */
+html[data-theme="macos"] .recharts-cartesian-axis-tick-value {
+  fill: #83848d !important;
+}
+html[data-theme="macos"] .recharts-cartesian-grid line {
+  stroke: #2a2d36 !important;
+}
+html[data-theme="macos"] .recharts-cartesian-axis-line {
+  stroke: #454854 !important;
+}
+html[data-theme="macos"] .recharts-tooltip-wrapper > div {
+  background: rgba(30, 32, 40, 0.95) !important;
+  border: 1px solid #454854 !important;
+  border-radius: 8px !important;
+  color: #f2f2f5 !important;
+}
+html[data-theme="macos"] .recharts-tooltip-label {
+  color: #ffffff !important;
+}
+/* Nav + panels use backdrop-filter (a stacking context); lift the nav above
+   page content so the profile dropdown never falls behind the cards. */
+html[data-theme="macos"] nav.bg-app-panel {
+  position: relative;
+  z-index: 70;
 }

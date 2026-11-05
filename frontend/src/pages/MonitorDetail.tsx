@@ -4,6 +4,10 @@ import LatencyChart from "../components/LatencyChart";
 import StatusRing from "../components/StatusRing";
 import DomainIntelCard from "../components/DomainIntelCard";
 import MultiPingCard from "../components/MultiPingCard";
+import IncidentList from "../components/IncidentList";
+import Card, { CardTitle } from "../components/Card";
+import Modal from "../components/Modal";
+import MonitorForm from "../components/MonitorForm";
 import { useIsChecking, useMonitor } from "../hooks/useMonitor";
 import { api, getRole } from "../lib/api";
 import { monitorStore } from "../lib/monitorStore";
@@ -18,9 +22,12 @@ import {
 } from "../lib/format";
 import { useLive } from "../hooks/useLive";
 import type {
+  AIStatus,
   CheckResult,
   DomainSSL,
+  EscalationPolicy,
   Incident,
+  Monitor,
   MonitorAnalysis,
   MonitorStats,
   MonitorStatus,
@@ -57,7 +64,6 @@ export default function MonitorDetail() {
   const [stats, setStats] = useState<MonitorStats | null>(null);
   const [uptime, setUptime] = useState<MonitorUptimeStat | null>(null);
   const [incidents, setIncidents] = useState<Incident[]>([]);
-  const [openIncident, setOpenIncident] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [domainSsl, setDomainSsl] = useState<DomainSSL | null>(null);
   const [domainSslLoading, setDomainSslLoading] = useState(false);
@@ -65,11 +71,24 @@ export default function MonitorDetail() {
   const [analysesLoaded, setAnalysesLoaded] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState("");
+  const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
   const [hours, setHours] = useState(24);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [toggling, setToggling] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [escalations, setEscalations] = useState<EscalationPolicy[]>([]);
+
+  // Escalation policies feed the edit form's dropdown (fetched once).
+  useEffect(() => {
+    api
+      .listEscalations()
+      .then(setEscalations)
+      .catch(() => {});
+  }, []);
 
   // Live "time ago" / "currently up for" ticker.
   useEffect(() => {
@@ -146,10 +165,24 @@ export default function MonitorDetail() {
     };
   }, [id, monitor?.status, monitor?.lastCheckAt]);
 
+  // Which provider/model the admin configured (Settings → AI). Read once; it
+  // drives the badge and the "not configured" hint.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .aiStatus()
+      .then((s) => !cancelled && setAiStatus(s))
+      .catch(() => !cancelled && setAiStatus(null));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const checksAsc = useMemo(
     () =>
       [...checks].sort(
-        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        (a, b) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
       ),
     [checks],
   );
@@ -164,7 +197,9 @@ export default function MonitorDetail() {
     let startT: number | null = null;
     for (let i = checksAsc.length - 1; i >= 0; i--) {
       if (isUpState(checksAsc[i].status) !== targetUp) {
-        startT = new Date(checksAsc[i + 1]?.createdAt ?? checksAsc[i].createdAt).getTime();
+        startT = new Date(
+          checksAsc[i + 1]?.createdAt ?? checksAsc[i].createdAt,
+        ).getTime();
         break;
       }
     }
@@ -184,7 +219,10 @@ export default function MonitorDetail() {
     for (const c of checksAsc) {
       const t = new Date(c.createdAt).getTime();
       if (t < from) continue;
-      const idx = Math.min(count - 1, Math.floor(((t - from) / windowMs) * count));
+      const idx = Math.min(
+        count - 1,
+        Math.floor(((t - from) / windowMs) * count),
+      );
       const cur = buckets[idx];
       if (!cur || RANK[c.status] > RANK[cur]) buckets[idx] = c.status;
       if (c.status === "down") downChecks++;
@@ -196,15 +234,25 @@ export default function MonitorDetail() {
     const downMinutes = Math.round((downChecks * interval) / 60);
     const pct =
       buckets.some((b) => b === "down") || failures > 0
-        ? (100 * (checksAsc.filter((c) => new Date(c.createdAt).getTime() >= from && c.status !== "down").length) /
-            Math.max(1, checksAsc.filter((c) => new Date(c.createdAt).getTime() >= from).length))
+        ? (100 *
+            checksAsc.filter(
+              (c) =>
+                new Date(c.createdAt).getTime() >= from && c.status !== "down",
+            ).length) /
+          Math.max(
+            1,
+            checksAsc.filter((c) => new Date(c.createdAt).getTime() >= from)
+              .length,
+          )
         : 100;
     return { buckets, failures, downMinutes, pct };
   }, [checksAsc, now, monitor?.intervalSec]);
 
   // Response-time summary over the selected window.
   const resp = useMemo(() => {
-    const vals = checksAsc.map((c) => c.latencyMs).filter((v): v is number => v != null);
+    const vals = checksAsc
+      .map((c) => c.latencyMs)
+      .filter((v): v is number => v != null);
     if (!vals.length) return { avg: null, min: null, max: null };
     return {
       avg: vals.reduce((a, b) => a + b, 0) / vals.length,
@@ -268,13 +316,34 @@ export default function MonitorDetail() {
     }
   }
 
+  // Open the same edit form used on the monitors list, right here on the
+  // detail page, instead of bouncing the user back to /monitors first.
+  async function saveEdit(m: Partial<Monitor>) {
+    if (!monitor) return;
+    setSaving(true);
+    setEditError("");
+    try {
+      await api.updateMonitor(monitor.id, m);
+      setEditing(false);
+      refresh();
+    } catch (e: any) {
+      setEditError(e.message || t("mon.saveFailed"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   // ---- render ----------------------------------------------------------
   if (!monitor) {
     return (
       <div className="space-y-4">
         <div className="text-slate-400">{t("det.loading")}</div>
         <div className="text-xs text-slate-500">
-          {t("det.loadingHint")} <Link className="underline" to="/monitors">{t("det.backMonitors")}</Link>.
+          {t("det.loadingHint")}{" "}
+          <Link className="underline" to="/monitors">
+            {t("det.backMonitors")}
+          </Link>
+          .
         </div>
       </div>
     );
@@ -285,12 +354,12 @@ export default function MonitorDetail() {
   const headlineColor = paused
     ? "text-amber-400"
     : monitor.status === "up"
-    ? "text-app-up"
-    : monitor.status === "down"
-    ? "text-app-down"
-    : monitor.status === "degraded"
-    ? "text-amber-400"
-    : "text-slate-300";
+      ? "text-app-up"
+      : monitor.status === "down"
+        ? "text-app-down"
+        : monitor.status === "degraded"
+          ? "text-amber-400"
+          : "text-slate-300";
   const linkedNotifs = notifications.filter((n) =>
     (monitor.notificationIds ?? []).includes(n.id),
   );
@@ -311,7 +380,10 @@ export default function MonitorDetail() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="relative">
-            <StatusRing status={paused ? "pending" : monitor.status} size={20} />
+            <StatusRing
+              status={paused ? "pending" : monitor.status}
+              size={20}
+            />
             {checking && (
               <span className="absolute inset-0 rounded-full animate-ping bg-sky-400/40" />
             )}
@@ -333,7 +405,9 @@ export default function MonitorDetail() {
             </h1>
             <div className="text-sm text-slate-400">
               {describeMonitor(monitor)} {t("det.forTarget")}{" "}
-              <span className="text-sky-400 break-all">{targetLabel(monitor)}</span>
+              <span className="text-sky-400 break-all">
+                {targetLabel(monitor)}
+              </span>
             </div>
           </div>
         </div>
@@ -343,23 +417,35 @@ export default function MonitorDetail() {
               className="btn-secondary"
               onClick={testNotification}
               disabled={!linkedNotifs.length}
-              title={linkedNotifs.length ? t("det.testTitle") : t("det.testTitleNone")}
+              title={
+                linkedNotifs.length
+                  ? t("det.testTitle")
+                  : t("det.testTitleNone")
+              }
             >
               {t("det.testNotification")}
             </button>
           )}
           {isAdmin && (
-            <button className="btn-secondary" onClick={toggleEnabled} disabled={toggling}>
+            <button
+              className="btn-secondary"
+              onClick={toggleEnabled}
+              disabled={toggling}
+            >
               {toggling ? "…" : paused ? t("common.resume") : t("common.pause")}
             </button>
           )}
           {isAdmin && (
-            <Link to="/monitors" className="btn-secondary">
+            <button className="btn-secondary" onClick={() => setEditing(true)}>
               {t("common.edit")}
-            </Link>
+            </button>
           )}
           {isAdmin && (
-            <button className="btn-secondary" onClick={checkNow} title={t("det.checkNowTitle")}>
+            <button
+              className="btn-secondary"
+              onClick={checkNow}
+              title={t("det.checkNowTitle")}
+            >
               {t("det.checkNow")}
             </button>
           )}
@@ -374,14 +460,21 @@ export default function MonitorDetail() {
           {/* Top stat cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Card>
-              <div className="text-xs text-slate-400">{t("det.currentStatus")}</div>
-              <div className={`text-2xl font-bold mt-1 ${headlineColor}`}>{headline}</div>
+              <div className="text-xs text-slate-400">
+                {t("det.currentStatus")}
+              </div>
+              <div className={`text-2xl font-bold mt-1 ${headlineColor}`}>
+                {headline}
+              </div>
               <div className="text-xs text-slate-500 mt-2">
                 {paused
                   ? t("det.monitoringPaused")
                   : runSecs != null
-                  ? t(monitor.status === "down" ? "det.downFor" : "det.upFor", { dur: formatUptime(runSecs) })
-                  : "—"}
+                    ? t(
+                        monitor.status === "down" ? "det.downFor" : "det.upFor",
+                        { dur: formatUptime(runSecs) },
+                      )
+                    : "—"}
               </div>
             </Card>
 
@@ -395,14 +488,20 @@ export default function MonitorDetail() {
                 )}
               </div>
               <div className="text-xs text-slate-500 mt-2">
-                {t("det.checkedEvery", { interval: humanInterval(monitor.intervalSec) })}
+                {t("det.checkedEvery", {
+                  interval: humanInterval(monitor.intervalSec),
+                })}
               </div>
             </Card>
 
             <Card>
               <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-400">{t("det.last24")}</span>
-                <span className="text-sm font-semibold">{last24.pct.toFixed(2)}%</span>
+                <span className="text-xs text-slate-400">
+                  {t("det.last24")}
+                </span>
+                <span className="text-sm font-semibold">
+                  {last24.pct.toFixed(2)}%
+                </span>
               </div>
               <div className="flex items-end gap-[3px] mt-2 h-9">
                 {last24.buckets.map((b, i) => (
@@ -418,7 +517,11 @@ export default function MonitorDetail() {
                 ))}
               </div>
               <div className="text-xs text-slate-500 mt-2">
-                {t("det.incidentsCount", { n: last24.failures, s: last24.failures === 1 ? "" : "s" })}, {t("det.mDown", { n: last24.downMinutes })}
+                {t("det.incidentsCount", {
+                  n: last24.failures,
+                  s: last24.failures === 1 ? "" : "s",
+                })}
+                , {t("det.mDown", { n: last24.downMinutes })}
               </div>
             </Card>
           </div>
@@ -426,22 +529,45 @@ export default function MonitorDetail() {
           {/* Uptime summary row */}
           <Card>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <UptimeStat label={t("det.last7days")} pct={pctFor(7)} history={uptime?.history} days={7} />
-              <UptimeStat label={t("det.last30days")} pct={pctFor(30)} history={uptime?.history} days={30} />
-              <UptimeStat label={t("det.last90days")} pct={pctFor(90)} history={uptime?.history} days={90} />
+              <UptimeStat
+                label={t("det.last7days")}
+                pct={pctFor(7)}
+                history={uptime?.history}
+                days={7}
+              />
+              <UptimeStat
+                label={t("det.last30days")}
+                pct={pctFor(30)}
+                history={uptime?.history}
+                days={30}
+              />
+              <UptimeStat
+                label={t("det.last90days")}
+                pct={pctFor(90)}
+                history={uptime?.history}
+                days={90}
+              />
               <div>
-                <div className="text-xs text-slate-400 mb-1">{t("det.sloTarget")}</div>
+                <div className="text-xs text-slate-400 mb-1">
+                  {t("det.sloTarget")}
+                </div>
                 {monitor.sloTargetPct && monitor.sloTargetPct > 0 ? (
                   <>
                     <div
                       className={`text-xl font-bold ${
-                        uptime && !uptime.sloMet ? "text-app-down" : "text-app-up"
+                        uptime && !uptime.sloMet
+                          ? "text-app-down"
+                          : "text-app-up"
                       }`}
                     >
-                      {monitor.sloTargetPct}%
+                      {monitor.sloTargetPct.toFixed(2)}%
                     </div>
                     <div className="text-xs text-slate-500">
-                      {uptime ? (uptime.sloMet ? t("det.onTrack") : t("det.belowTarget")) : "—"}
+                      {uptime
+                        ? uptime.sloMet
+                          ? t("det.onTrack")
+                          : t("det.belowTarget")
+                        : "—"}
                     </div>
                   </>
                 ) : (
@@ -454,7 +580,7 @@ export default function MonitorDetail() {
           {/* Response time */}
           <Card>
             <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-              <h2 className="text-sm font-medium text-slate-300">{t("det.responseTime")}</h2>
+              <CardTitle className="mb-0">{t("det.responseTime")}</CardTitle>
               <select
                 className="input w-auto text-sm"
                 value={hours}
@@ -466,10 +592,14 @@ export default function MonitorDetail() {
               </select>
             </div>
             {loading ? (
-              <div className="text-slate-500 text-sm py-10 text-center">{t("common.loading")}</div>
+              <div className="text-slate-500 text-sm py-10 text-center">
+                {t("common.loading")}
+              </div>
             ) : !checksAsc.length ? (
               <div className="text-center py-10">
-                <div className="text-slate-300 font-medium">{t("det.noRespTitle")}</div>
+                <div className="text-slate-300 font-medium">
+                  {t("det.noRespTitle")}
+                </div>
                 <div className="text-xs text-slate-500 mt-1">
                   {t("det.noRespHint")}
                 </div>
@@ -478,125 +608,80 @@ export default function MonitorDetail() {
               <LatencyChart checks={checksAsc} />
             )}
             <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-slate-800">
-              <Metric label={t("det.average")} value={resp.avg ?? stats?.avgLatencyMs ?? null} />
+              <Metric
+                label={t("det.average")}
+                value={resp.avg ?? stats?.avgLatencyMs ?? null}
+              />
               <Metric label={t("det.minimum")} value={resp.min} />
               <Metric label={t("det.maximum")} value={resp.max} />
             </div>
           </Card>
 
           {/* Latest incidents */}
-          <Card>
-            <h2 className="text-sm font-medium text-slate-300 mb-3">{t("det.latestIncidents")}</h2>
-            {incidents.length === 0 ? (
-              <div className="text-center py-8 bg-slate-900/40 border border-slate-800 rounded-lg">
-                <div className="text-lg font-semibold">{t("det.noIncidents")}</div>
-                <div className="text-xs text-slate-500 mt-1">{t("det.noIncidentsHint")}</div>
-              </div>
-            ) : (
-              <ul className="space-y-2">
-                {incidents.slice(0, 10).map((i) => {
-                  const expanded = openIncident === i.id;
-                  const startMs = new Date(i.startedAt).getTime();
-                  const endMs = i.resolvedAt ? new Date(i.resolvedAt).getTime() : Date.now();
-                  const duration = formatUptime(Math.max(0, (endMs - startMs) / 1000));
-                  return (
-                    <li key={i.id} className="border border-slate-800 rounded-lg overflow-hidden">
-                      <button
-                        type="button"
-                        onClick={() => setOpenIncident(expanded ? null : i.id)}
-                        className="w-full flex items-start justify-between gap-3 p-3 text-left cursor-pointer hover:bg-slate-800/40 transition-colors"
-                      >
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium truncate">{i.headline}</div>
-                          <div className="text-xs text-slate-500">{new Date(i.startedAt).toLocaleString()}</div>
-                          {i.body && (
-                            <div className="text-xs text-slate-400 mt-1 truncate">{i.body}</div>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span
-                            className={`text-xs px-2 py-0.5 rounded-full ${
-                              i.status === "resolved"
-                                ? "bg-app-up/15 text-app-up"
-                                : "bg-amber-500/15 text-amber-400"
-                            }`}
-                          >
-                            {i.status === "resolved" ? t("incident.resolved") : t("incident.open")}
-                          </span>
-                          <span
-                            className={`text-slate-500 text-xs transition-transform ${
-                              expanded ? "rotate-180" : ""
-                            }`}
-                          >
-                            ▾
-                          </span>
-                        </div>
-                      </button>
-                      {expanded && (
-                        <div className="px-3 pb-3 text-xs border-t border-slate-800/60">
-                          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 mt-2">
-                            <span className="text-slate-500">{t("det.incStarted")}</span>
-                            <span className="text-slate-300">{new Date(i.startedAt).toLocaleString()}</span>
-                            {i.resolvedAt && (
-                              <>
-                                <span className="text-slate-500">{t("det.incResolved")}</span>
-                                <span className="text-slate-300">{new Date(i.resolvedAt).toLocaleString()}</span>
-                              </>
-                            )}
-                            <span className="text-slate-500">{t("det.incDuration")}</span>
-                            <span className="text-slate-300">{duration}</span>
-                          </div>
-                          {i.body && (
-                            <div className="mt-2">
-                              <div className="text-slate-500 mb-1">{t("det.incCause")}</div>
-                              <div className="text-slate-300 whitespace-pre-wrap break-words bg-slate-900/60 border border-slate-800 rounded p-2 font-mono">
-                                {i.body}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </Card>
+          <IncidentList incidents={incidents} />
 
           {/* Outside-in domain audit: DNS + email security + headers + SSL */}
-          {(monitor.type === "http" || monitor.type === "cert" || monitor.type === "dns") && (
-            <DomainIntelCard id={id} />
-          )}
-
+          {(monitor.type === "http" ||
+            monitor.type === "cert" ||
+            monitor.type === "dns") && <DomainIntelCard id={id} />}
         </div>
 
         {/* ===== Sidebar ===== */}
         <div className="space-y-6">
           <Card>
-            <h2 className="text-sm font-semibold mb-3">{t("det.domainSsl")}</h2>
+            <CardTitle>{t("det.domainSsl")}</CardTitle>
             {domainSslLoading ? (
               <div className="text-sm text-slate-500">{t("det.checking")}</div>
             ) : !domainSsl ? (
-              <div className="text-sm text-slate-500">{t("det.notAvailable")}</div>
+              <div className="text-sm text-slate-500">
+                {t("det.notAvailable")}
+              </div>
             ) : (
               <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                  <div className="min-w-0">
+                    <div className="text-xs text-slate-500 mb-0.5">
+                      {t("det.publicIp")}
+                    </div>
+                    <div className="font-mono text-sm text-slate-200 truncate">
+                      {domainSsl.publicIp || "—"}
+                    </div>
+                  </div>
+                  <div className="min-w-0 text-right">
+                    <div className="text-xs text-slate-500 mb-0.5">
+                      {t("det.rowLocalIp")}
+                    </div>
+                    <div className="font-mono text-sm text-slate-200 truncate">
+                      {monitor.localIp || "—"}
+                    </div>
+                  </div>
+                </div>
                 <div>
-                  <div className="text-xs text-slate-500 mb-1">{t("det.sslValidUntil")}</div>
+                  <div className="text-xs text-slate-500 mb-1">
+                    {t("det.sslValidUntil")}
+                  </div>
                   {domainSsl.ssl.ok && domainSsl.ssl.notAfter ? (
                     <>
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm text-slate-200">
-                          {new Date(domainSsl.ssl.notAfter).toLocaleDateString()}
+                          {new Date(
+                            domainSsl.ssl.notAfter,
+                          ).toLocaleDateString()}
                         </span>
                         <DaysBadge days={domainSsl.ssl.daysRemaining} />
                       </div>
                       {domainSsl.ssl.issuer && (
-                        <div className="text-xs text-slate-500 mt-0.5">{t("det.issuedBy", { issuer: domainSsl.ssl.issuer })}</div>
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          {t("det.issuedBy", { issuer: domainSsl.ssl.issuer })}
+                        </div>
                       )}
                     </>
                   ) : (
                     <div className="text-sm text-slate-500">
-                      — <span className="text-xs break-all">{domainSsl.ssl.error}</span>
+                      —{" "}
+                      <span className="text-xs break-all">
+                        {domainSsl.ssl.error}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -609,17 +694,24 @@ export default function MonitorDetail() {
                     <>
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm text-slate-200">
-                          {new Date(domainSsl.domain.expiryDate).toLocaleDateString()}
+                          {new Date(
+                            domainSsl.domain.expiryDate,
+                          ).toLocaleDateString()}
                         </span>
                         <DaysBadge days={domainSsl.domain.daysRemaining ?? 0} />
                       </div>
                       {domainSsl.domain.registrar && (
-                        <div className="text-xs text-slate-500 mt-0.5">{domainSsl.domain.registrar}</div>
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          {domainSsl.domain.registrar}
+                        </div>
                       )}
                     </>
                   ) : (
                     <div className="text-sm text-slate-500">
-                      — <span className="text-xs break-all">{domainSsl.domain.error}</span>
+                      —{" "}
+                      <span className="text-xs break-all">
+                        {domainSsl.domain.error}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -633,14 +725,20 @@ export default function MonitorDetail() {
           {/* AI root-cause analysis — sidebar, below Domain & SSL */}
           <Card>
             <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-              <h2 className="text-sm font-medium text-slate-300 flex items-center gap-2">
+              <CardTitle className="mb-0 flex items-center gap-2">
                 {t("det.aiTitle")}
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400 font-semibold">
-                  Qwen
+                  {aiStatus?.enabled
+                    ? aiStatus.providerName || aiStatus.model || "AI"
+                    : t("det.aiOff")}
                 </span>
-              </h2>
+              </CardTitle>
               {isAdmin && (
-                <button className="btn-secondary" onClick={reanalyze} disabled={analyzing}>
+                <button
+                  className="btn-secondary"
+                  onClick={reanalyze}
+                  disabled={analyzing}
+                >
                   {analyzing ? t("det.aiAnalyzing") : t("det.aiReanalyze")}
                 </button>
               )}
@@ -650,13 +748,33 @@ export default function MonitorDetail() {
                 {t("det.aiProgress")}
               </div>
             )}
-            {analyzeError && <div className="text-xs text-app-down mb-2">{analyzeError}</div>}
+            {analyzeError && (
+              <div className="text-xs text-app-down mb-2">{analyzeError}</div>
+            )}
             {!analysesLoaded ? (
-              <div className="text-sm text-slate-500">{t("common.loading")}</div>
-            ) : analyses.length === 0 ? (
               <div className="text-sm text-slate-500">
-                {t("det.aiEmpty")} <span className="text-slate-300">{t("det.aiReanalyze")}</span> {t("det.aiEmptyEnd")}
+                {t("common.loading")}
               </div>
+            ) : analyses.length === 0 ? (
+              aiStatus && !aiStatus.enabled ? (
+                <div className="text-sm text-slate-500">
+                  {t("det.aiNotConfigured")}{" "}
+                  {isAdmin && (
+                    <Link
+                      to="/settings?tab=ai"
+                      className="text-sky-400 hover:underline"
+                    >
+                      {t("det.aiConfigure")}
+                    </Link>
+                  )}
+                </div>
+              ) : (
+                <div className="text-sm text-slate-500">
+                  {t("det.aiEmpty")}{" "}
+                  <span className="text-slate-300">{t("det.aiReanalyze")}</span>{" "}
+                  {t("det.aiEmptyEnd")}
+                </div>
+              )
             ) : (
               <div className="space-y-3">
                 <AnalysisBody a={analyses[0]} now={now} />
@@ -667,11 +785,16 @@ export default function MonitorDetail() {
                     </summary>
                     <div className="mt-2 space-y-2">
                       {analyses.slice(1).map((a) => (
-                        <div key={a.id} className="border border-slate-800 rounded-lg p-3">
+                        <div
+                          key={a.id}
+                          className="border border-slate-800 rounded-lg p-3"
+                        >
                           <div className="text-xs text-slate-500 mb-1">
                             {new Date(a.createdAt).toLocaleString()} · {a.model}
                           </div>
-                          <div className="text-xs text-slate-400 line-clamp-3 whitespace-pre-wrap">{a.analysis}</div>
+                          <div className="text-xs text-slate-400 line-clamp-3 whitespace-pre-wrap">
+                            {a.analysis}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -682,43 +805,68 @@ export default function MonitorDetail() {
           </Card>
 
           <Card>
-            <h2 className="text-sm font-semibold mb-3">{t("det.details")}</h2>
+            <CardTitle>{t("det.details")}</CardTitle>
             <dl className="space-y-2 text-sm">
               {monitor.type === "http" && monitor.url && (
                 <Row label={t("det.rowDomain")}>
-                  <a href={monitor.url} target="_blank" rel="noreferrer" className="text-sky-400 break-all hover:underline">
+                  <a
+                    href={monitor.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sky-400 break-all hover:underline"
+                  >
                     {hostFromUrl(monitor.url)}
                   </a>
                 </Row>
               )}
               <Row label={t("det.rowTarget")}>
-                <span className="break-all text-slate-300">{targetLabel(monitor)}</span>
+                <span className="break-all text-slate-300">
+                  {targetLabel(monitor)}
+                </span>
               </Row>
               <Row label={t("det.rowType")}>
                 <span className="uppercase text-xs">{monitor.type}</span>
               </Row>
-              <Row label={t("det.rowInterval")}>{humanInterval(monitor.intervalSec)}</Row>
+              <Row label={t("det.rowInterval")}>
+                {humanInterval(monitor.intervalSec)}
+              </Row>
               <Row label={t("det.rowTimeout")}>{monitor.timeoutSec}s</Row>
               {monitor.type === "http" && (
                 <Row label={t("det.rowSsl")}>
                   {monitor.ignoreTls ? (
-                    <span className="text-amber-400">{t("det.sslIgnored")}</span>
+                    <span className="text-amber-400">
+                      {t("det.sslIgnored")}
+                    </span>
                   ) : (
                     <span className="text-app-up">{t("det.sslStrict")}</span>
                   )}
                 </Row>
               )}
-              {monitor.localIp && (
-                <Row label={t("det.rowLocalIp")}>
-                  <span className="font-mono text-xs text-slate-300">{monitor.localIp}</span>
+              {domainSsl?.publicIp && (
+                <Row label={t("det.publicIp")}>
+                  <span className="font-mono text-xs text-slate-300">
+                    {domainSsl.publicIp}
+                  </span>
                 </Row>
               )}
-              {monitor.createdBy && <Row label={t("det.rowAddedBy")}>{monitor.createdBy}</Row>}
+              {monitor.localIp && (
+                <Row label={t("det.rowLocalIp")}>
+                  <span className="font-mono text-xs text-slate-300">
+                    {monitor.localIp}
+                  </span>
+                </Row>
+              )}
+              {monitor.createdBy && (
+                <Row label={t("det.rowAddedBy")}>{monitor.createdBy}</Row>
+              )}
             </dl>
             {monitor.tags && monitor.tags.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-3">
                 {monitor.tags.map((tag) => (
-                  <span key={tag} className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
+                  <span
+                    key={tag}
+                    className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300"
+                  >
                     #{tag}
                   </span>
                 ))}
@@ -727,9 +875,11 @@ export default function MonitorDetail() {
           </Card>
 
           <Card>
-            <h2 className="text-sm font-semibold mb-3">{t("det.notifiedTitle")}</h2>
+            <CardTitle>{t("det.notifiedTitle")}</CardTitle>
             {linkedNotifs.length === 0 ? (
-              <div className="text-sm text-slate-500">{t("det.notifiedNone")}</div>
+              <div className="text-sm text-slate-500">
+                {t("det.notifiedNone")}
+              </div>
             ) : (
               <ul className="space-y-1.5 text-sm">
                 {linkedNotifs.map((n) => (
@@ -744,17 +894,37 @@ export default function MonitorDetail() {
           </Card>
         </div>
       </div>
+
+      {editing && isAdmin && (
+        <Modal
+          title={t("mon.editTitle")}
+          onClose={() => setEditing(false)}
+          wide
+        >
+          <MonitorForm
+            initial={monitor}
+            notifications={notifications}
+            escalations={escalations}
+            saving={saving}
+            onSave={saveEdit}
+            onCancel={() => setEditing(false)}
+          />
+          {editError && (
+            <div className="text-app-down text-sm mt-3">{editError}</div>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }
 
-function Card({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="bg-app-panel border border-slate-800 rounded-lg p-4">{children}</div>
-  );
-}
-
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+function Row({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex items-center justify-between gap-3">
       <dt className="text-slate-500">{label}</dt>
@@ -768,10 +938,17 @@ function DaysBadge({ days }: { days: number }) {
     days < 0
       ? "bg-app-down/15 text-app-down"
       : days <= 14
-      ? "bg-amber-500/15 text-amber-400"
-      : "bg-app-up/15 text-app-up";
-  const label = days < 0 ? t("det.expiredAgo", { n: -days }) : t("det.daysLeft", { n: days });
-  return <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${color}`}>{label}</span>;
+        ? "bg-amber-500/15 text-amber-400"
+        : "bg-app-up/15 text-app-up";
+  const label =
+    days < 0
+      ? t("det.expiredAgo", { n: -days })
+      : t("det.daysLeft", { n: days });
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${color}`}>
+      {label}
+    </span>
+  );
 }
 
 // AnalysisBody renders one AI analysis. The model output is plain-ish markdown
@@ -787,10 +964,16 @@ function AnalysisBody({ a, now }: { a: MonitorAnalysis; now: number }) {
         <span className="flex items-center gap-2">
           <span
             className={`px-1.5 py-0.5 rounded-full ${
-              a.status === "down" ? "bg-app-down/15 text-app-down" : "bg-slate-800 text-slate-400"
+              a.status === "down"
+                ? "bg-app-down/15 text-app-down"
+                : "bg-slate-800 text-slate-400"
             }`}
           >
-            {a.status === "down" ? t("status.down") : a.status === "up" ? t("status.up") : a.status}
+            {a.status === "down"
+              ? t("status.down")
+              : a.status === "up"
+                ? t("status.up")
+                : a.status}
           </span>
           <span className="text-slate-500">{a.model}</span>
         </span>
@@ -818,7 +1001,13 @@ function renderInline(s: string): React.ReactNode {
   const parts = s.split(/\*\*(.+?)\*\*/g);
   if (parts.length === 1) return s;
   return parts.map((p, i) =>
-    i % 2 === 1 ? <strong key={i} className="text-slate-100">{p}</strong> : <span key={i}>{p}</span>,
+    i % 2 === 1 ? (
+      <strong key={i} className="text-slate-100">
+        {p}
+      </strong>
+    ) : (
+      <span key={i}>{p}</span>
+    ),
   );
 }
 
@@ -848,7 +1037,9 @@ function UptimeStat({
   return (
     <div>
       <div className="text-xs text-slate-400 mb-1">{label}</div>
-      <div className={`text-xl font-bold ${pct == null ? "text-slate-500" : pct >= 99.9 ? "text-app-up" : pct >= 99 ? "text-amber-400" : "text-app-down"}`}>
+      <div
+        className={`text-xl font-bold ${pct == null ? "text-slate-500" : pct >= 99.9 ? "text-app-up" : pct >= 99 ? "text-amber-400" : "text-app-down"}`}
+      >
         {pct == null ? "— — —%" : `${pct.toFixed(pct >= 99.95 ? 2 : 2)}%`}
       </div>
       <div className="flex items-end gap-[2px] mt-1.5 h-6">
@@ -859,7 +1050,15 @@ function UptimeStat({
             style={{
               height: "100%",
               backgroundColor:
-                p.pct < 0 ? "#1e293b" : p.pct >= 99.9 ? "#22c55e" : p.pct >= 99 ? "#4ade80" : p.pct >= 90 ? "#eab308" : "#ef4444",
+                p.pct < 0
+                  ? "#1e293b"
+                  : p.pct >= 99.9
+                    ? "#22c55e"
+                    : p.pct >= 99
+                      ? "#4ade80"
+                      : p.pct >= 90
+                        ? "#eab308"
+                        : "#ef4444",
             }}
             title={`${p.date}: ${p.pct < 0 ? "no data" : p.pct.toFixed(2) + "%"}`}
           />

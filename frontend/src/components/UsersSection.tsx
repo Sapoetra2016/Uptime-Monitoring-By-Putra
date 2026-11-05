@@ -79,7 +79,12 @@ export default function UsersSection() {
       >
         <label className="block text-sm">
           <span className="text-slate-300">{t("usr.thUsername")}</span>
-          <input className="input mt-1" value={username} onChange={(e) => setUsername(e.target.value)} required />
+          <input
+            className="input mt-1"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            required
+          />
         </label>
         <label className="block text-sm">
           <span className="text-slate-300">{t("login.password")}</span>
@@ -93,7 +98,11 @@ export default function UsersSection() {
         </label>
         <label className="block text-sm">
           <span className="text-slate-300">{t("usr.thRole")}</span>
-          <select className="input mt-1" value={role} onChange={(e) => setRole(e.target.value as UserRole)}>
+          <select
+            className="input mt-1"
+            value={role}
+            onChange={(e) => setRole(e.target.value as UserRole)}
+          >
             <option value="viewer">{t("usr.roleViewer")}</option>
             <option value="admin">{t("usr.roleAdmin")}</option>
           </select>
@@ -128,9 +137,16 @@ export default function UsersSection() {
                     <option value="viewer">viewer</option>
                   </select>
                 </td>
-                <td className="p-3 text-slate-400">{u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "—"}</td>
+                <td className="p-3 text-slate-400">
+                  {u.createdAt
+                    ? new Date(u.createdAt).toLocaleDateString()
+                    : "—"}
+                </td>
                 <td className="p-3 text-right space-x-2 whitespace-nowrap">
-                  <button className="btn-secondary" onClick={() => resetPassword(u)}>
+                  <button
+                    className="btn-secondary"
+                    onClick={() => resetPassword(u)}
+                  >
                     {t("usr.resetPw")}
                   </button>
                   <button className="btn-danger" onClick={() => remove(u)}>

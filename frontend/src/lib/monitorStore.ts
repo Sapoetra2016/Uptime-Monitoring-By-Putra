@@ -79,7 +79,9 @@ class MonitorStore {
   /** Full current list, ordered. Not used by reactive components directly
    *  (they use ids + per-node) — handy for imperative lookups. */
   getAll(): Monitor[] {
-    return this.order.map((id) => this.monitors.get(id)).filter((m): m is Monitor => !!m);
+    return this.order
+      .map((id) => this.monitors.get(id))
+      .filter((m): m is Monitor => !!m);
   }
 
   getById(id: string): Monitor | undefined {
@@ -190,7 +192,14 @@ class MonitorStore {
   }
 
   private recomputeStats() {
-    const s: GlobalStats = { total: 0, up: 0, down: 0, degraded: 0, pending: 0, unknown: 0 };
+    const s: GlobalStats = {
+      total: 0,
+      up: 0,
+      down: 0,
+      degraded: 0,
+      pending: 0,
+      unknown: 0,
+    };
     for (const m of this.monitors.values()) {
       s.total++;
       const status = m.status as MonitorStatus;

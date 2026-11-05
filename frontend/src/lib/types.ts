@@ -1,13 +1,5 @@
 export type MonitorType =
-  | "http"
-  | "tcp"
-  | "dns"
-  | "cert"
-  | "push"
-  | "docker"
-  | "ping"
-  | "redis"
-  | "db";
+  "http" | "tcp" | "dns" | "cert" | "push" | "docker" | "ping" | "redis" | "db";
 export type MonitorStatus = "up" | "down" | "pending" | "degraded" | "unknown";
 export type UserRole = "admin" | "viewer";
 
@@ -69,6 +61,9 @@ export interface Monitor {
   lastCheckAt?: string;
   lastLatencyMs?: number;
   statusReason?: string;
+  // when the current status began (last up/down/degraded flip) — drives the
+  // dashboard ordering so recently changed services float to the top
+  stateSince?: string;
 }
 
 export interface CheckResult {
@@ -87,6 +82,53 @@ export interface Notification {
   name: string;
   type: "telegram" | "discord" | "slack" | "webhook" | "email";
   config: Record<string, unknown>;
+  templateId?: string; // empty = channel default template
+}
+
+// Periodic uptime report config (backend settings key "report_settings").
+// frequency daily|weekly|monthly; sendTime "HH:MM" server-local; weeklyDay a
+// weekday name; monthlyDay 1-28. Delivery uses the report's own Channels list
+// (channels), configured directly in Settings → Laporan and fully independent
+// of the alert Notification channels. notificationIds/slackBotToken/slackChannel
+// are legacy fields kept optional for backward compatibility but no longer used.
+export interface ReportChannel {
+  id: string;
+  name: string;
+  type: Notification["type"];
+  config: Record<string, unknown>;
+}
+
+export interface ReportSettings {
+  enabled: boolean;
+  frequency: "daily" | "weekly" | "monthly" | "";
+  sendTime: string;
+  weeklyDay: string;
+  monthlyDay: number;
+  notificationIds?: string[];
+  channels?: ReportChannel[];
+  sendFile: boolean;
+  fileFormat: "xlsx" | "csv" | "";
+  subjectTemplate: string;
+  bodyTemplate: string;
+  slackBotToken?: string;
+  slackChannel?: string;
+  lastSentAt?: string;
+}
+
+// Reusable notification message template (see backend internal/notifier +
+// the "alert_templates" settings key). Channel is "email" or "chat"; email
+// templates also carry a Subject. Bodies support {placeholders}.
+export interface AlertTemplate {
+  id: string;
+  name: string;
+  channel: "email" | "chat";
+  subject?: string;
+  bodyDown: string;
+  bodyUp: string;
+  bodyDegraded: string;
+  bodyEscalation: string;
+  isDefault: boolean;
+  builtin?: boolean;
 }
 
 export interface EscalationStep {
@@ -160,9 +202,46 @@ export interface PublicMonitor {
 export interface SystemSettings {
   defaultCheckIntervalSec: number;
   defaultTimeoutSec: number;
+  defaultSloTargetPct: number; // 0 = no global SLO target enforced
   checkRetentionDays: number; // 0 = keep forever
   publicTitle: string;
   publicFooter: string;
+}
+
+// AI provider presets and the admin-configurable LLM settings (Settings → AI).
+export interface AIProvider {
+  id: string;
+  name: string;
+  baseUrl: string;
+  defaultModel: string;
+}
+
+// Returned by GET /settings/ai — the API key is never sent in full, only a
+// preview + hasKey flag.
+export interface AISettingsView {
+  enabled: boolean;
+  provider: string;
+  baseUrl: string;
+  model: string;
+  hasKey: boolean;
+  keyPreview: string;
+}
+
+// Payload for PUT /settings/ai and POST /settings/ai/test. An empty apiKey
+// means "keep the stored key".
+export interface AISettingsInput {
+  enabled: boolean;
+  provider: string;
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+}
+
+export interface AIStatus {
+  enabled: boolean;
+  provider: string;
+  providerName: string;
+  model: string;
 }
 
 // TLS-certificate and domain-registration expiry, resolved on demand by the
@@ -188,6 +267,7 @@ export interface DomainInfo {
 export interface DomainSSL {
   host: string;
   domainName?: string;
+  publicIp?: string;
   ssl: SSLInfo;
   domain: DomainInfo;
 }
@@ -199,12 +279,17 @@ export interface SSLDetail {
   serial?: string;
   protocol?: string;
   keyAlgorithm?: string;
+  keyBits?: number;
   sans?: string[];
   notBefore?: string | null;
   notAfter?: string | null;
   daysRemaining: number;
   expiresSoon: boolean;
   expired: boolean;
+  hostnameMatch: boolean;
+  chainTrusted: boolean;
+  selfSigned: boolean;
+  score: number;
   ok: boolean;
   error?: string;
 }
@@ -221,7 +306,14 @@ export interface DNSRecords {
 
 export interface EmailSecurity {
   spf?: { present: boolean; record?: string; ok: boolean };
-  dmarc?: { present: boolean; policy?: string; pct: number; reportTo?: string; record?: string; ok: boolean };
+  dmarc?: {
+    present: boolean;
+    policy?: string;
+    pct: number;
+    reportTo?: string;
+    record?: string;
+    ok: boolean;
+  };
   dkim?: { selector: string; present: boolean; ok: boolean }[];
   error?: string;
 }

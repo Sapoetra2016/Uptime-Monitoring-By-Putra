@@ -20,14 +20,21 @@ export default function MonitorsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [tagFilter, setTagFilter] = useState("");
-  const [enabledFilter, setEnabledFilter] = useState<"all" | "active" | "paused">(() =>
-    getPrefs().hidePaused ? "active" : "all",
-  );
+  const [query, setQuery] = useState("");
+  const [enabledFilter, setEnabledFilter] = useState<
+    "all" | "active" | "paused"
+  >(() => (getPrefs().hidePaused ? "active" : "all"));
   const isAdmin = getRole() === "admin";
 
   useEffect(() => {
-    api.listNotifications().then(setNotifications).catch(() => {});
-    api.listEscalations().then(setEscalations).catch(() => {});
+    api
+      .listNotifications()
+      .then(setNotifications)
+      .catch(() => {});
+    api
+      .listEscalations()
+      .then(setEscalations)
+      .catch(() => {});
   }, []);
 
   // Collect all tags from the current monitors — structural changes (add/remove/CRUD)
@@ -54,8 +61,29 @@ export default function MonitorsPage() {
         return m?.tags?.includes(tagFilter);
       });
     }
-    return out;
-  }, [ids, tagFilter, enabledFilter]);
+    // Free-text search across name, target (url/host), local IP and tags so a
+    // user can find a monitor by name, IP address or domain.
+    const q = query.trim().toLowerCase();
+    if (q) {
+      out = out.filter((id) => {
+        const m = monitorStore.getById(id);
+        if (!m) return false;
+        const hay = [m.name, m.url, m.host, m.localIp, (m.tags ?? []).join(" ")]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return hay.includes(q);
+      });
+    }
+    // The Monitors page is a management table, so keep it predictable:
+    // alphabetical by name (case-insensitive), unlike the status-driven
+    // Dashboard ordering.
+    return [...out].sort((a, b) => {
+      const na = monitorStore.getById(a)?.name ?? "";
+      const nb = monitorStore.getById(b)?.name ?? "";
+      return na.localeCompare(nb, undefined, { sensitivity: "base" });
+    });
+  }, [ids, tagFilter, enabledFilter, query]);
 
   async function save(m: Partial<Monitor>) {
     setSaving(true);
@@ -108,6 +136,27 @@ export default function MonitorsPage() {
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-2xl font-bold">{t("mon.title")}</h1>
         <div className="flex items-center gap-3">
+          <div className="relative">
+            <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <circle cx="11" cy="11" r="7" />
+                <path d="m21 21-4.3-4.3" />
+              </svg>
+            </span>
+            <input
+              className="input w-56 text-sm pl-8"
+              placeholder={t("mon.searchPlaceholder")}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
           <div className="flex rounded-md border border-slate-700 overflow-hidden text-sm">
             {(["all", "active", "paused"] as const).map((opt) => (
               <button
@@ -124,7 +173,11 @@ export default function MonitorsPage() {
             ))}
           </div>
           {allTags.length > 0 && (
-            <select className="input w-auto text-sm" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)}>
+            <select
+              className="input w-auto text-sm"
+              value={tagFilter}
+              onChange={(e) => setTagFilter(e.target.value)}
+            >
               <option value="">{t("mon.allTags")}</option>
               {allTags.map((tag) => (
                 <option key={tag} value={tag}>
@@ -142,9 +195,7 @@ export default function MonitorsPage() {
       </div>
 
       {!isAdmin && (
-        <div className="text-sm text-slate-400">
-          {t("mon.viewerNote")}
-        </div>
+        <div className="text-sm text-slate-400">{t("mon.viewerNote")}</div>
       )}
 
       {editing && isAdmin && (
@@ -195,8 +246,13 @@ export default function MonitorsPage() {
             ))}
             {visibleIds.length === 0 && (
               <tr>
-                <td colSpan={isAdmin ? 9 : 8} className="p-6 text-center text-slate-500">
-                  {ids.length === 0 ? t("mon.noneConfigured") : t("mon.noneMatch")}
+                <td
+                  colSpan={isAdmin ? 9 : 8}
+                  className="p-6 text-center text-slate-500"
+                >
+                  {ids.length === 0
+                    ? t("mon.noneConfigured")
+                    : t("mon.noneMatch")}
                 </td>
               </tr>
             )}

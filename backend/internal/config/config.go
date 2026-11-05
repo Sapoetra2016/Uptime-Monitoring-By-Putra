@@ -16,6 +16,10 @@ type Config struct {
 	CheckTimeout   time.Duration
 	AllowedOrigins []string
 
+	// ReportDir is where the periodic uptime report CSV files are written,
+	// kept separate from the application tree (default /home/noc/report).
+	ReportDir string
+
 	// LLM (Qwen via DashScope OpenAI-compatible endpoint) used for AI
 	// root-cause analysis on down events. The feature stays dormant until
 	// UPTIME_LLM_API_KEY is set.
@@ -56,6 +60,7 @@ func Load() *Config {
 		Port:           env("UPTIME_PORT", "8080"),
 		CheckTimeout:   time.Duration(timeoutSec) * time.Second,
 		AllowedOrigins: envList("UPTIME_ALLOWED_ORIGINS", "*"),
+		ReportDir:      env("UPTIME_REPORT_DIR", "/home/noc/report"),
 		LLMAPIKey:      env("UPTIME_LLM_API_KEY", ""),
 		LLMBaseURL:     env("UPTIME_LLM_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
 		LLMModel:       env("UPTIME_LLM_MODEL", "qwen-flash"),

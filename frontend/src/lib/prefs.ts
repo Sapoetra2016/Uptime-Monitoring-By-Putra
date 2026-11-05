@@ -4,6 +4,8 @@
 export interface Preferences {
   /** UI language. "id" = Bahasa Indonesia, "en" = English. */
   language: "id" | "en";
+  /** Visual theme. "default" = dark UI, "metro" = flat tiles, "material" = Material 3, "ios" = Apple style, "aero" = Windows 7 glass, "macos" = macOS dark vibrancy. */
+  theme: "default" | "metro" | "material" | "ios" | "aero" | "macos";
   /** Default uptime-history window shown on public pages, in days. */
   uptimeWindowDays: number;
   /** Grey out / hide paused monitors in listings. */
@@ -16,6 +18,7 @@ const KEY = "uptime_prefs";
 
 const DEFAULTS: Preferences = {
   language: "id",
+  theme: "default",
   uptimeWindowDays: 30,
   hidePaused: false,
   compact: false,

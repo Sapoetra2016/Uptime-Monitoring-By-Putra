@@ -6,7 +6,9 @@
 package domainssl
 
 import (
+	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -28,17 +30,27 @@ type SSLDetail struct {
 	Serial        string     `json:"serial,omitempty"`
 	Protocol      string     `json:"protocol,omitempty"`
 	KeyAlgorithm  string     `json:"keyAlgorithm,omitempty"`
+	KeyBits       int        `json:"keyBits,omitempty"`
 	SANs          []string   `json:"sans,omitempty"`
 	NotBefore     *time.Time `json:"notBefore,omitempty"`
 	NotAfter      *time.Time `json:"notAfter,omitempty"`
 	DaysRemaining int        `json:"daysRemaining"`
 	ExpiresSoon   bool       `json:"expiresSoon"`
 	Expired       bool       `json:"expired"`
+	HostnameMatch bool       `json:"hostnameMatch"`
+	ChainTrusted  bool       `json:"chainTrusted"`
+	SelfSigned    bool       `json:"selfSigned"`
+	Score         int        `json:"score"`
 	OK            bool       `json:"ok"`
 	Error         string     `json:"error,omitempty"`
 }
 
-// CheckSSLDetailed dials host:port and returns the full leaf-cert report.
+// CheckSSLDetailed dials host:port and returns the full leaf-cert report plus a
+// 0-100 SSL score. Unlike the basic monitor (which verifies the leaf only),
+// Domain Intelligence is the one place that does the full CA / chain-of-trust
+// analysis - but it still reads the certificate when that chain is NOT trusted
+// (self-signed or incomplete-chain internal servers) so the report and score
+// stay useful; trust is folded into the score instead of aborting the probe.
 func CheckSSLDetailed(ctx context.Context, host, port string, timeout time.Duration) SSLDetail {
 	if port == "" {
 		port = "443"
@@ -48,10 +60,12 @@ func CheckSSLDetailed(ctx context.Context, host, port string, timeout time.Durat
 	}
 	dialer := &net.Dialer{Timeout: timeout}
 	conn, err := tls.DialWithDialer(dialer, "tcp", net.JoinHostPort(host, port), &tls.Config{
-		MinVersion:         tls.VersionTLS12,
+		// Probe down to TLS 1.0 so an outdated protocol can be detected and
+		// penalised in the score rather than failing the handshake outright.
+		MinVersion:         tls.VersionTLS10,
 		ServerName:         host,
 		NextProtos:         []string{"h2", "http/1.1"},
-		InsecureSkipVerify: false,
+		InsecureSkipVerify: true,
 	})
 	if err != nil {
 		return SSLDetail{Error: err.Error()}
@@ -65,21 +79,98 @@ func CheckSSLDetailed(ctx context.Context, host, port string, timeout time.Durat
 	leaf := certs[0]
 	days := int(time.Until(leaf.NotAfter).Hours() / 24)
 	nb, na := leaf.NotBefore, leaf.NotAfter
+
+	// Does the certificate actually cover the host we dialed (SAN / CN)?
+	hostnameMatch := leaf.VerifyHostname(host) == nil
+
+	// Chain-of-trust against the system roots, evaluated manually so an
+	// untrusted chain is reported (and scored) rather than thrown away.
+	chainTrusted := false
+	roots, _ := x509.SystemCertPool()
+	if roots == nil {
+		roots = x509.NewCertPool()
+	}
+	intermediates := x509.NewCertPool()
+	for _, c := range certs[1:] {
+		intermediates.AddCert(c)
+	}
+	if _, verr := leaf.Verify(x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: intermediates,
+		DNSName:       host,
+	}); verr == nil {
+		chainTrusted = true
+	}
+
+	// Self-signed heuristic: issuer and subject are byte-identical.
+	selfSigned := bytes.Equal(leaf.RawIssuer, leaf.RawSubject)
+
 	d := SSLDetail{
 		Subject:       leaf.Subject.CommonName,
 		Issuer:        leaf.Issuer.CommonName,
 		Serial:        leaf.SerialNumber.String(),
 		Protocol:      tlsVersionName(conn.ConnectionState().Version),
 		KeyAlgorithm:  keyAlgoName(leaf),
+		KeyBits:       keyBits(leaf),
 		SANs:          dedupeStrings(leaf.DNSNames),
 		NotBefore:     &nb,
 		NotAfter:      &na,
 		DaysRemaining: days,
 		ExpiresSoon:   days >= 0 && days <= 21,
 		Expired:       days < 0,
+		HostnameMatch: hostnameMatch,
+		ChainTrusted:  chainTrusted,
+		SelfSigned:    selfSigned,
 		OK:            true,
 	}
+	d.Score = sslScore(d)
 	return d
+}
+
+// sslScore weights the signals a reviewer cares about into a 0-100 grade:
+// trusted chain (30) + hostname match (15) + validity (20 not-expired, up to
+// 10 more for a healthy window) + protocol (15 for TLS1.3, 10 for 1.2) + key
+// strength (10). A valid-but-self-signed internal cert therefore lands around
+// 70, a fully trusted modern public cert at 100.
+func sslScore(d SSLDetail) int {
+	score := 0
+	if d.ChainTrusted {
+		score += 30
+	}
+	if d.HostnameMatch {
+		score += 15
+	}
+	if !d.Expired {
+		score += 20
+		if !d.ExpiresSoon {
+			score += 10
+		} else {
+			score += 5
+		}
+	}
+	switch d.Protocol {
+	case "TLS 1.3":
+		score += 15
+	case "TLS 1.2":
+		score += 10
+	}
+	switch {
+	case d.KeyAlgorithm == "Ed25519":
+		score += 10
+	case d.KeyAlgorithm == "ECDSA" && d.KeyBits >= 256:
+		score += 10
+	case strings.HasPrefix(d.KeyAlgorithm, "RSA") && d.KeyBits >= 2048:
+		score += 10
+	case strings.HasPrefix(d.KeyAlgorithm, "RSA") && d.KeyBits >= 1024:
+		score += 4
+	}
+	if score > 100 {
+		score = 100
+	}
+	if score < 0 {
+		score = 0
+	}
+	return score
 }
 
 func tlsVersionName(v uint16) string {
@@ -114,6 +205,22 @@ func keyAlgoName(c *x509.Certificate) string {
 func rsaBits(c *x509.Certificate) int {
 	if ks, ok := c.PublicKey.(interface{ Size() int }); ok {
 		return ks.Size() * 8
+	}
+	return 0
+}
+
+// keyBits reports the effective security strength in bits for scoring: RSA
+// modulus size, EC curve size, or 256 for Ed25519.
+func keyBits(c *x509.Certificate) int {
+	switch c.PublicKeyAlgorithm {
+	case x509.RSA:
+		return rsaBits(c)
+	case x509.ECDSA:
+		if ec, ok := c.PublicKey.(*ecdsa.PublicKey); ok && ec.Curve != nil {
+			return ec.Curve.Params().BitSize
+		}
+	case x509.Ed25519:
+		return 256
 	}
 	return 0
 }

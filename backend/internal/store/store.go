@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,7 +39,7 @@ func (s *Store) ListMonitors(ctx context.Context) ([]models.Monitor, error) {
 		       COALESCE(m.push_token,''), m.push_grace_sec, m.enabled, COALESCE(m.created_by,''), COALESCE(m.local_ip,''), m.escalation_id, m.created_at, m.updated_at,
 		       m.headers, m.body, m.basic_auth_user, m.basic_auth_pass, m.tags, m.latency_warn_ms,
 		       m.redis_password, m.redis_key, m.db_driver, m.dsn, m.exec_query, m.expected_rows, m.ignore_tls, m.slo_target_pct,
-		       st.status, st.last_check_at, st.last_latency_ms, st.status_reason
+		       st.status, st.last_check_at, st.last_latency_ms, st.status_reason, st.state_since
 		FROM monitors m
 		LEFT JOIN monitor_state st ON st.monitor_id = m.id
 		ORDER BY m.created_at ASC`)
@@ -55,6 +56,7 @@ func (s *Store) ListMonitors(ctx context.Context) ([]models.Monitor, error) {
 			lat        *float64
 			lca        *time.Time
 			rsn        *string
+			ssince     *time.Time
 			headersRaw []byte
 			bodyRaw    *string
 			bauRaw     *string
@@ -76,7 +78,7 @@ func (s *Store) ListMonitors(ctx context.Context) ([]models.Monitor, error) {
 			&m.PushToken, &m.PushGraceSec, &m.Enabled, &m.CreatedBy, &m.LocalIp, &m.EscalationID, &m.CreatedAt, &m.UpdatedAt,
 			&headersRaw, &bodyRaw, &bauRaw, &bapRaw, &tagsRaw, &warnRaw,
 			&rpRaw, &rkRaw, &drvRaw, &dsnRaw, &qRaw, &expRows, &ignoreTLS, &sloPct,
-			&st, &lca, &lat, &rsn,
+			&st, &lca, &lat, &rsn, &ssince,
 		)
 		if err != nil {
 			return nil, err
@@ -88,6 +90,7 @@ func (s *Store) ListMonitors(ctx context.Context) ([]models.Monitor, error) {
 		}
 		m.LastCheckAt = lca
 		m.LastLatencyMs = lat
+		m.StateSince = ssince
 		if rsn != nil {
 			m.StatusReason = *rsn
 		}
@@ -446,7 +449,7 @@ func (s *Store) ChecksInWindow(ctx context.Context, monitorID string, since time
 // ---------- Notifications ----------
 
 func (s *Store) ListNotifications(ctx context.Context) ([]models.Notification, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, name, type, config, created_at FROM notifications ORDER BY created_at ASC`)
+	rows, err := s.pool.Query(ctx, `SELECT id, name, type, config, COALESCE(template_id,''), created_at FROM notifications ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -455,7 +458,7 @@ func (s *Store) ListNotifications(ctx context.Context) ([]models.Notification, e
 	for rows.Next() {
 		var n models.Notification
 		var cfg []byte
-		if err := rows.Scan(&n.ID, &n.Name, &n.Type, &cfg, &n.CreatedAt); err != nil {
+		if err := rows.Scan(&n.ID, &n.Name, &n.Type, &cfg, &n.TemplateID, &n.CreatedAt); err != nil {
 			return nil, err
 		}
 		n.Config = json.RawMessage(cfg)
@@ -467,8 +470,8 @@ func (s *Store) ListNotifications(ctx context.Context) ([]models.Notification, e
 func (s *Store) GetNotification(ctx context.Context, id string) (*models.Notification, error) {
 	var n models.Notification
 	var cfg []byte
-	err := s.pool.QueryRow(ctx, `SELECT id, name, type, config, created_at FROM notifications WHERE id=$1`, id).
-		Scan(&n.ID, &n.Name, &n.Type, &cfg, &n.CreatedAt)
+	err := s.pool.QueryRow(ctx, `SELECT id, name, type, config, COALESCE(template_id,''), created_at FROM notifications WHERE id=$1`, id).
+		Scan(&n.ID, &n.Name, &n.Type, &cfg, &n.TemplateID, &n.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -483,8 +486,8 @@ func (s *Store) CreateNotification(ctx context.Context, n *models.Notification) 
 	if len(cfg) == 0 {
 		cfg = json.RawMessage("{}")
 	}
-	_, err := s.pool.Exec(ctx, `INSERT INTO notifications (id,name,type,config,created_at) VALUES ($1,$2,$3,$4,$5)`,
-		n.ID, n.Name, n.Type, cfg, n.CreatedAt)
+	_, err := s.pool.Exec(ctx, `INSERT INTO notifications (id,name,type,config,template_id,created_at) VALUES ($1,$2,$3,$4,NULLIF($5,''),$6)`,
+		n.ID, n.Name, n.Type, cfg, n.TemplateID, n.CreatedAt)
 	return err
 }
 
@@ -493,7 +496,7 @@ func (s *Store) UpdateNotification(ctx context.Context, n *models.Notification) 
 	if len(cfg) == 0 {
 		cfg = json.RawMessage("{}")
 	}
-	_, err := s.pool.Exec(ctx, `UPDATE notifications SET name=$2, type=$3, config=$4 WHERE id=$1`, n.ID, n.Name, n.Type, cfg)
+	_, err := s.pool.Exec(ctx, `UPDATE notifications SET name=$2, type=$3, config=$4, template_id=NULLIF($5,'') WHERE id=$1`, n.ID, n.Name, n.Type, cfg, n.TemplateID)
 	return err
 }
 
@@ -766,6 +769,32 @@ func (s *Store) ListIncidentsForMonitor(ctx context.Context, monitorID string, l
 	return out, rows.Err()
 }
 
+// ListIncidentsSince returns every incident whose started_at falls at or
+// after the given time, including resolved ones. Used by the periodic report
+// builder to summarise what happened during the reporting window.
+func (s *Store) ListIncidentsSince(ctx context.Context, since time.Time) ([]models.Incident, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, monitor_id, status, headline, body, started_at, resolved_at
+		FROM incidents WHERE started_at >= $1 ORDER BY started_at DESC`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.Incident{}
+	for rows.Next() {
+		var i models.Incident
+		var body *string
+		if err := rows.Scan(&i.ID, &i.MonitorID, &i.Status, &i.Headline, &body, &i.StartedAt, &i.ResolvedAt); err != nil {
+			return nil, err
+		}
+		if body != nil {
+			i.Body = *body
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
+}
+
 // ---------- Users ----------
 
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (id, hash string, role models.UserRole, err error) {
@@ -786,7 +815,7 @@ func (s *Store) EnsureUser(ctx context.Context, username, hash string, role mode
 }
 
 func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, username, role, created_at FROM users ORDER BY created_at ASC`)
+	rows, err := s.pool.Query(ctx, `SELECT id, username, COALESCE(display_name,''), COALESCE(email,''), role, created_at FROM users ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -795,13 +824,29 @@ func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 	for rows.Next() {
 		var u models.User
 		var role string
-		if err := rows.Scan(&u.ID, &u.Username, &role, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &role, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		u.Role = models.UserRole(role)
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// GetUserProfile loads the self-service profile fields for one user id.
+func (s *Store) GetUserProfile(ctx context.Context, id string) (displayName, email string, err error) {
+	err = s.pool.QueryRow(ctx, `SELECT COALESCE(display_name,''), COALESCE(email,'') FROM users WHERE id=$1`, id).Scan(&displayName, &email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", ErrNotFound
+	}
+	return displayName, email, err
+}
+
+// UpdateUserProfile persists self-service profile edits (display name + email).
+// Username and role are intentionally not editable here.
+func (s *Store) UpdateUserProfile(ctx context.Context, id, displayName, email string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE users SET display_name=$2, email=$3 WHERE id=$1`, id, displayName, email)
+	return err
 }
 
 func (s *Store) CreateUser(ctx context.Context, username, hash string, role models.UserRole) error {
@@ -851,6 +896,7 @@ func DefaultSystemSettings() models.SystemSettings {
 	return models.SystemSettings{
 		DefaultCheckIntervalSec: 60,
 		DefaultTimeoutSec:       10,
+		DefaultSloTargetPct:     0, // 0 = no global SLO target enforced
 		CheckRetentionDays:      0, // 0 = keep history forever
 		PublicTitle:             "System Status",
 		PublicFooter:            "Powered by Uptime Monitoring",
@@ -882,8 +928,16 @@ func (s *Store) GetSystemSettings(ctx context.Context) (models.SystemSettings, e
 			}
 		}
 	}
+	atof := func(key string, dst *float64) {
+		if v, ok := kv[key]; ok {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				*dst = f
+			}
+		}
+	}
 	atoi("default_check_interval_sec", &set.DefaultCheckIntervalSec)
 	atoi("default_timeout_sec", &set.DefaultTimeoutSec)
+	atof("default_slo_target_pct", &set.DefaultSloTargetPct)
 	atoi("check_retention_days", &set.CheckRetentionDays)
 	if v, ok := kv["public_title"]; ok {
 		set.PublicTitle = v
@@ -898,6 +952,7 @@ func (s *Store) SaveSystemSettings(ctx context.Context, set models.SystemSetting
 	kv := map[string]string{
 		"default_check_interval_sec": strconv.Itoa(set.DefaultCheckIntervalSec),
 		"default_timeout_sec":        strconv.Itoa(set.DefaultTimeoutSec),
+		"default_slo_target_pct":     strconv.FormatFloat(set.DefaultSloTargetPct, 'f', -1, 64),
 		"check_retention_days":       strconv.Itoa(set.CheckRetentionDays),
 		"public_title":               set.PublicTitle,
 		"public_footer":              set.PublicFooter,
@@ -911,6 +966,191 @@ func (s *Store) SaveSystemSettings(ctx context.Context, set models.SystemSetting
 		}
 	}
 	return nil
+}
+
+// ---------- AI settings ----------
+
+// aiSettingsKey is the settings key holding the JSON AI provider config.
+const aiSettingsKey = "ai_settings"
+
+// GetAISettings returns the saved AI provider config, or a zero (disabled)
+// value when the key has never been written.
+func (s *Store) GetAISettings(ctx context.Context) (models.AISettings, error) {
+	var raw string
+	err := s.pool.QueryRow(ctx, `SELECT value FROM settings WHERE key=$1`, aiSettingsKey).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) || strings.TrimSpace(raw) == "" {
+		return models.AISettings{}, nil
+	}
+	if err != nil {
+		return models.AISettings{}, err
+	}
+	var set models.AISettings
+	if err := json.Unmarshal([]byte(raw), &set); err != nil {
+		return models.AISettings{}, err
+	}
+	return set, nil
+}
+
+// SaveAISettings persists the AI provider config as JSON under the settings key.
+func (s *Store) SaveAISettings(ctx context.Context, set models.AISettings) error {
+	b, err := json.Marshal(set)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, now())
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+		aiSettingsKey, string(b))
+	return err
+}
+
+// ---------- Report settings ----------
+
+// reportSettingsKey is the settings key holding the JSON periodic report config.
+const reportSettingsKey = "report_settings"
+
+// GetReportSettings returns the saved report config, or a zero (disabled)
+// value when the key has never been written.
+func (s *Store) GetReportSettings(ctx context.Context) (models.ReportSettings, error) {
+	var raw string
+	err := s.pool.QueryRow(ctx, `SELECT value FROM settings WHERE key=$1`, reportSettingsKey).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) || strings.TrimSpace(raw) == "" {
+		return models.ReportSettings{}, nil
+	}
+	if err != nil {
+		return models.ReportSettings{}, err
+	}
+	var set models.ReportSettings
+	if err := json.Unmarshal([]byte(raw), &set); err != nil {
+		return models.ReportSettings{}, err
+	}
+	return set, nil
+}
+
+// SaveReportSettings persists the report config as JSON under the settings key.
+func (s *Store) SaveReportSettings(ctx context.Context, set models.ReportSettings) error {
+	b, err := json.Marshal(set)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, now())
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+		reportSettingsKey, string(b))
+	return err
+}
+
+// ApplyDefaultsToAllMonitors bulk-overwrites the interval, timeout and SLO
+// target of every monitor with the given global defaults. A non-positive
+// argument means "leave that column untouched". Returns the number of rows
+// updated.
+func (s *Store) ApplyDefaultsToAllMonitors(ctx context.Context, intervalSec, timeoutSec int, sloPct float64) (int64, error) {
+	if intervalSec <= 0 && timeoutSec <= 0 && sloPct <= 0 {
+		return 0, nil
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE monitors SET
+			interval_sec    = CASE WHEN $1::int > 0 THEN $1::int ELSE interval_sec END,
+			timeout_sec     = CASE WHEN $2::int > 0 THEN $2::int ELSE timeout_sec END,
+			slo_target_pct  = CASE WHEN $3::float8 > 0 THEN $3::float8 ELSE slo_target_pct END,
+			updated_at      = now()`,
+		intervalSec, timeoutSec, sloPct)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// ---------- Alert templates ----------
+
+// alertTemplatesKey is the settings key holding the JSON template library.
+const alertTemplatesKey = "alert_templates"
+
+// DefaultAlertTemplates are the built-in templates seeded when none are saved
+// yet. They mirror the historical hardcoded wording so existing behaviour is
+// preserved until an admin customises them.
+func DefaultAlertTemplates() []models.AlertTemplate {
+	return []models.AlertTemplate{
+		{
+			ID: "builtin-chat", Name: "Default (Chat)", Channel: "chat",
+			BodyDown:       "🔴 {monitor} DOWN\n\nNama Server : {serverName}\nIP Public    : {ipPublic}\nIP Lokal     : {ipLocal}\nWaktu        : {time}\nPesan        : {message}",
+			BodyUp:         "✅ {monitor} UP again\n\nNama Server : {serverName}\nIP Public    : {ipPublic}\nIP Lokal     : {ipLocal}\nWaktu        : {time}\nDown for     : {duration}",
+			BodyDegraded:   "⚠️ {monitor} DEGRADED\n\nNama Server : {serverName}\nIP Public    : {ipPublic}\nIP Lokal     : {ipLocal}\nWaktu        : {time}\nPesan        : {message}",
+			BodyEscalation: "🔴 [ESCALATION step {step} - down {duration}] {monitor} masih DOWN\n\nNama Server : {serverName}\nIP Public    : {ipPublic}\nIP Lokal     : {ipLocal}\nWaktu        : {time}\nPesan        : {message}",
+			IsDefault:      true, Builtin: true,
+		},
+		{
+			ID: "builtin-email", Name: "Default (Email)", Channel: "email",
+			Subject:        "[{status}] {monitor}",
+			BodyDown:       "{monitor} is DOWN at {time}.\n\nNama Server : {serverName}\nIP Public    : {ipPublic}\nIP Lokal     : {ipLocal}\nWaktu        : {time}\nPesan        : {message}\nTarget       : {url}",
+			BodyUp:         "{monitor} is UP again at {time}.\n\nNama Server : {serverName}\nIP Public    : {ipPublic}\nIP Lokal     : {ipLocal}\nDown for     : {duration}",
+			BodyDegraded:   "{monitor} is DEGRADED at {time}.\n\nNama Server : {serverName}\nIP Public    : {ipPublic}\nIP Lokal     : {ipLocal}\nPesan        : {message}",
+			BodyEscalation: "[ESCALATION step {step}] {monitor} has been DOWN for {duration}.\n\nNama Server : {serverName}\nIP Public    : {ipPublic}\nIP Lokal     : {ipLocal}\nWaktu        : {time}\nPesan        : {message}",
+			IsDefault:      true, Builtin: true,
+		},
+	}
+}
+
+// GetAlertTemplates returns the saved library, seeding built-in defaults (not
+// persisted) when the key has never been written.
+func (s *Store) GetAlertTemplates(ctx context.Context) ([]models.AlertTemplate, error) {
+	var raw string
+	err := s.pool.QueryRow(ctx, `SELECT value FROM settings WHERE key=$1`, alertTemplatesKey).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) || strings.TrimSpace(raw) == "" {
+		return DefaultAlertTemplates(), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var list []models.AlertTemplate
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		return nil, err
+	}
+	if len(list) == 0 {
+		return DefaultAlertTemplates(), nil
+	}
+	return list, nil
+}
+
+// SaveAlertTemplates persists the whole library as JSON under the settings key.
+// It fills missing IDs and keeps at most one default per channel (the first
+// flagged one wins; if none is flagged the first of each channel becomes the
+// default) so the dispatcher always has a template to fall back to.
+func (s *Store) SaveAlertTemplates(ctx context.Context, list []models.AlertTemplate) error {
+	if list == nil {
+		list = []models.AlertTemplate{}
+	}
+	seenDefault := map[string]bool{}
+	for i := range list {
+		if list[i].ID == "" {
+			list[i].ID = newID()
+		}
+		if list[i].IsDefault {
+			if seenDefault[list[i].Channel] {
+				list[i].IsDefault = false
+			} else {
+				seenDefault[list[i].Channel] = true
+			}
+		}
+	}
+	for _, ch := range []string{"chat", "email"} {
+		if !seenDefault[ch] {
+			for i := range list {
+				if list[i].Channel == ch {
+					list[i].IsDefault = true
+					break
+				}
+			}
+		}
+	}
+	b, err := json.Marshal(list)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, now())
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, alertTemplatesKey, string(b))
+	return err
 }
 
 // ---------- Check-history maintenance ----------

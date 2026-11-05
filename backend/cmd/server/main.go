@@ -19,6 +19,7 @@ import (
 	"github.com/uptime/monitoring/internal/models"
 	"github.com/uptime/monitoring/internal/monitor"
 	"github.com/uptime/monitoring/internal/notifier"
+	"github.com/uptime/monitoring/internal/report"
 	"github.com/uptime/monitoring/internal/store"
 )
 
@@ -65,8 +66,14 @@ func main() {
 	}
 	go dispatcher.StartEscalationLoop(ctx)
 
+	// Periodic uptime report scheduler (daily/weekly/monthly to the channels
+	// selected in Settings; dormant while report_settings.enabled is false).
+	reportScheduler := report.NewScheduler(st, dispatcher, cfg.ReportDir)
+	go reportScheduler.Start(ctx)
+
 	authenticator := auth.New(cfg.JWTSecret)
 	srv := api.NewServer(st, eng, hub, dispatcher, authenticator, cfg.AllowedOrigins)
+	srv.Reports = reportScheduler
 
 	httpSrv := &http.Server{
 		Addr:              ":" + cfg.Port,
